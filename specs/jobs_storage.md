@@ -19,6 +19,14 @@ interrupted `running` jobs to `failed` with `WorkerInterrupted`; retry creates a
 fresh linked job. Queued cancellation is immediate; running cancellation is a
 flag observed by the worker.
 
+Before source access or subprocess creation, the worker parses the stored
+canonical recipe and applies its own immutable `RecipeCeilings`. A direct or
+legacy queued job outside policy fails with `RecipePolicyError`; its persisted
+job error contains a deterministic bounded compact JSON summary with path-sorted
+violations. Activity-event messages retain their smaller bounded/truncated
+representation. The immutable stored recipe and hash are not changed. API
+creation and retry apply the same check before enqueueing.
+
 Each job, and CLI parser work, runs in a child process group with disconnected stdin/stdout and a
 private stderr log. The parent mirrors bounded JSONL events into SQLite, applies
 the recipe wall-time limit, sends TERM/terminate, waits three seconds, then
@@ -40,5 +48,7 @@ full backlog page before closing.
 
 - There is one logical worker: multi-host leases, priorities, cleanup/retention,
   and object storage are not implemented.
+- Split API/worker deployments do not negotiate policy versions; a stricter
+  worker safely fails a job accepted by a looser API.
 - Non-POSIX parser isolation/limits, disk/output quotas, seccomp, and cgroup
   enforcement remain deployment work.

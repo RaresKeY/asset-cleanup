@@ -40,6 +40,14 @@ escape the service.
 ## Web and container boundaries
 
 - Same-origin access and loopback binding are defaults; CORS is disabled.
+- Trusted-host and same-origin checks precede a whole-request spool boundary.
+  Strict declared-length and observed-byte limits protect JSON as well as
+  multipart uploads, while terminal request replay preserves disconnect events
+  needed by streaming responses.
+- Server-owned immutable recipe ceilings are an authority boundary. A recipe
+  may ask for less work but cannot raise maximums or lower inverse-cost floors;
+  API and worker reject rather than mutate it, and advertise the effective
+  policy for clients.
 - Inline rendering is limited to sanitized derived preview GLB and approved
   images. Raw uploads download as attachments.
 - Artifact access resolves registered immutable IDs beneath the data root.
@@ -55,4 +63,6 @@ escape the service.
 - Platform-specific sandboxing beyond POSIX resource limits needs a separate
   Linux/macOS/Windows design.
 - Fuzz corpora and decompression-bomb fixtures are not yet assembled.
+- Slow-client deadlines, aggregate concurrent request-spool quotas, and service
+  policy version negotiation remain deployment design work.
 - Remote multi-user authorization, quotas, and audit policy are deferred.

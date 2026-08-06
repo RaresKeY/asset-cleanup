@@ -115,6 +115,8 @@ class JobWorker:
             return False
         output: Path | None = None
         try:
+            recipe = Recipe.from_json(str(job["recipe_json"]))
+            self.config.recipe_ceilings.enforce(recipe)
             asset = self.store.get_asset(str(job["asset_id"]))
             if asset is None:
                 raise RuntimeError("job references a missing asset")
@@ -129,7 +131,6 @@ class JobWorker:
             expected = (self.config.jobs_root / str(job["id"])).resolve()
             if output != expected:
                 raise RuntimeError("job output path does not match its identifier")
-            recipe = Recipe.from_json(str(job["recipe_json"]))
             result = self._run_with_events(str(job["id"]), source, recipe, output)
             artifacts = list(result.artifacts)
             manifest = Path(result.manifest_path).resolve()
