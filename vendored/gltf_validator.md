@@ -26,11 +26,13 @@ under `/usr/share/licenses/gltf-validator/` and
 ## Adapter boundary
 
 The application discovers a fixed executable identity; recipes cannot select a
-path, command, configuration file, or arguments. Validation uses a mode-0600
-private YAML configuration capped at 1,000 issues, fixed argument-array
-invocation, a 120-second timeout, process-group termination, a 16 MiB JSON-report
-ceiling, and a 64 KiB stderr tail. The adapter scrubs inherited environment
-variables and fails closed on timeout, output overflow, incomplete pipe drain,
+path, command, configuration file, or arguments. Validation records a sanitized
+fixed-argv contract without private paths and uses a mode-0600 private YAML
+configuration capped at 1,000 issues, fixed argument-array invocation, a
+120-second timeout, process-group termination, a 16 MiB JSON-report ceiling, and
+a 64 KiB stderr tail. The adapter supplies a fixed default search path and
+locale/time-zone values, retaining only required Windows loader roots on that
+platform, and fails closed on timeout, output overflow, incomplete pipe drain,
 malformed evidence, invalid counts, nonzero exit, glTF errors, or a report
 version other than the pin. Evidence records provider identity, discovered and
 reported versions, limits, elapsed time, return code, bounded stderr, issue
@@ -70,3 +72,5 @@ current 1-GiB input ceiling.
   acceptance needs golden fixtures for formats the application advertises.
 - Native parser fuzzing and a cross-version golden corpus are not yet part of the
   project verification matrix.
+- Windows termination is best-effort and does not yet use a Job Object to prove
+  descendant-tree cleanup; production bundling is currently Linux amd64.

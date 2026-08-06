@@ -116,6 +116,17 @@ def test_gltf_validator_uses_fixed_private_configuration(
         "infos": 0,
         "hints": 0,
     }
+    assert result["argv_contract"] == [
+        "<provider-executable>",
+        "--stdout",
+        "--validate-resources",
+        "--no-write-timestamp",
+        "--no-absolute-path",
+        "--no-messages",
+        "--config",
+        "<private-config>",
+        "<relative-candidate>",
+    ]
     assert result["provider"] == {
         "name": "Khronos glTF Validator",
         "kind": "native-executable",
@@ -211,9 +222,11 @@ def test_gltf_validator_drains_and_bounds_stderr_tail(tmp_path: Path) -> None:
 @pytest.mark.skipif(os.name != "posix", reason="process-group assertion is POSIX-specific")
 def test_gltf_validator_timeout_kills_descendants(tmp_path: Path) -> None:
     orphan_marker = tmp_path / "orphan-survived"
+    ready_marker = tmp_path / "child-ready"
     executable = _fake_validator(
         tmp_path,
         f"""
+        import pathlib
         import subprocess
         import sys
         import time
@@ -221,10 +234,16 @@ def test_gltf_validator_timeout_kills_descendants(tmp_path: Path) -> None:
         subprocess.Popen([
             sys.executable,
             "-c",
-            "import pathlib,time; "
-            "time.sleep(0.5); "
+            "import pathlib,signal,time; "
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+            "pathlib.Path({str(ready_marker)!r}).write_text('ready'); "
+            "time.sleep(2); "
             "pathlib.Path({str(orphan_marker)!r}).write_text('survived')",
         ])
+        for _ in range(100):
+            if pathlib.Path({str(ready_marker)!r}).exists():
+                break
+            time.sleep(0.01)
         time.sleep(30)
         """,
     )
@@ -236,13 +255,67 @@ def test_gltf_validator_timeout_kills_descendants(tmp_path: Path) -> None:
         timeout_seconds=0.1,
     )
     elapsed = time.monotonic() - started
-    time.sleep(0.7)
+    time.sleep(1.2)
 
     assert elapsed < 5
     assert result["ran"] is True
     assert result["passed"] is False
     assert result["timed_out"] is True
     assert "wall-time" in result["reason"]
+    assert not orphan_marker.exists()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process-group assertion is POSIX-specific")
+def test_gltf_validator_kills_pipe_holding_descendant_after_leader_exits(
+    tmp_path: Path,
+) -> None:
+    orphan_marker = tmp_path / "pipe-holder-survived"
+    ready_marker = tmp_path / "pipe-holder-ready"
+    executable = _fake_validator(
+        tmp_path,
+        f"""
+        import json
+        import pathlib
+        import subprocess
+        import sys
+        import time
+
+        subprocess.Popen([
+            sys.executable,
+            "-c",
+            "import pathlib,signal,time; "
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+            "pathlib.Path({str(ready_marker)!r}).write_text('ready'); "
+            "time.sleep(2); "
+            "pathlib.Path({str(orphan_marker)!r}).write_text('survived')",
+        ])
+        for _ in range(100):
+            if pathlib.Path({str(ready_marker)!r}).exists():
+                break
+            time.sleep(0.01)
+        print(json.dumps({{
+            "validatorVersion": {GLTF_VALIDATOR_VERSION!r},
+            "issues": {{
+                "numErrors": 0,
+                "numWarnings": 0,
+                "numInfos": 0,
+                "numHints": 0,
+                "messages": [],
+            }},
+        }}))
+        """,
+    )
+
+    started = time.monotonic()
+    result = run_gltf_validator(_asset(tmp_path), str(executable), timeout_seconds=5)
+    elapsed = time.monotonic() - started
+    time.sleep(1.2)
+
+    assert elapsed < 5
+    assert result["ran"] is True
+    assert result["passed"] is False
+    assert result["drain_incomplete"] is True
+    assert result["reason"] == "validator output streams did not close"
     assert not orphan_marker.exists()
 
 
