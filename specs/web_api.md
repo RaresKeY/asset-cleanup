@@ -23,8 +23,13 @@ Upload uses a bounded pre-multipart spool, then streams to a private temporary
 file while hashing, content-sniffs, and validates references before
 content-addressed storage. Since web intake is one file, externally referenced
 glTF/OBJ members are rejected. Inspection/preview parsing runs in bounded child
-processes and inspection responses have a report-byte ceiling. The browser
-recipe is a small server-expanded subset of the canonical strict Recipe.
+processes and inspection responses have a report-byte ceiling. The browser recipe is a small server-expanded subset of the canonical strict
+Recipe. New browser recipes request Khronos glTF validation by default and may
+explicitly disable it. Legacy editor JSON that predates the field is accepted
+only when a lossless projection from its immutable canonical recipe reproduces
+the same canonical JSON and hash; retries persist that exact recovered editor
+state. External validator warnings participate in the canonical
+`fail_on_warning` gate.
 Job views read metrics and validation only when the registered size is below the
 evidence ceiling and the on-disk size and SHA-256 still match; corrupt evidence
 is omitted rather than rendered as proof.

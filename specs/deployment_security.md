@@ -20,12 +20,18 @@ minimums. API validation, creation, and retry paths reject recipes outside it,
 and the worker rechecks stored recipes before starting a processing child so
 stale, imported, or directly modified queue state cannot bypass operator policy.
 
-The multi-stage Dockerfile builds locked Node frontend assets and a locked Python
-wheel, then runs Python 3.12 slim as UID/GID 10001. Node/build tooling is absent
-from runtime; `/data` is the writable volume. Compose publishes loopback only,
-uses read-only root, noexec tmpfs, dropped capabilities, no-new-privileges,
-PID/memory/CPU limits, and init. The secure overlay runs a separate worker with
-`--no-embedded-worker`, the shared data volume, and `network_mode: none`.
+The multi-stage Dockerfile builds locked Node frontend assets and a locked
+Python wheel. A separate disposable stage downloads the official Khronos glTF
+Validator 2.0.0-dev.3.10 Linux-amd64 archive from its versioned release URL and
+verifies SHA-256 before reading its members. Only the fixed native executable
+and its complete upstream LICENSE/NOTICES enter the runtime image; archive,
+Dart, Node, npm, and build tooling do not. The runtime uses Python 3.12 slim as
+UID/GID 10001; `/data` is its writable volume. Non-amd64 builds fail explicitly
+instead of silently omitting a requested validation gate. Compose publishes
+loopback only, uses read-only root, noexec tmpfs, dropped capabilities,
+no-new-privileges, PID/memory/CPU limits, and init. The secure overlay runs a
+separate worker with `--no-embedded-worker`, the shared data volume, and
+`network_mode: none`.
 
 ## Gaps
 
@@ -36,3 +42,5 @@ PID/memory/CPU limits, and init. The secure overlay runs a separate worker with
 - Per-job POSIX limits and container controls are defense in depth, but the
   current worker is not yet a per-job rootless OCI/gVisor sandbox with a private
   filesystem and mandatory no-network boundary.
+- Validator artifact signing/reproducible builds and Linux arm64 packaging are
+  absent; upstream advisory monitoring and SBOM generation remain manual.

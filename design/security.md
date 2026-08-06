@@ -33,6 +33,11 @@ escape the service.
   canonical recipe and hash remain truthful. Validate on schema/policy
   validation, create, retry, and immediately before worker execution.
 - External adapters receive fixed executable identities and argument arrays.
+- Bundled executable providers come only from fixed upstream release identities.
+  Verify an owned cryptographic digest before reading archive members, retain
+  upstream license/notice material, copy only required runtime files, and fail
+  unsupported architectures explicitly. Release archives remain hostile until
+  verified; build-time network access must not become runtime network access.
 - Jobs run in separate process groups; the current POSIX child enforces CPU,
   address-space, open-file, and time limits, while Compose/container limits add
   process/memory/CPU boundaries.
@@ -73,3 +78,6 @@ escape the service.
 - Remote multi-user authorization, quotas, and audit policy are deferred.
 - Aggregate request-rate, response-bandwidth, temporary-disk, and workspace
   storage budgets still need an authenticated deployment design.
+- Validator artifact signing/reproducible builds, automated upstream
+  advisory/issue monitoring, and a verified Linux arm64 provider remain open
+  supply-chain work.

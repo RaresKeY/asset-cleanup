@@ -24,6 +24,8 @@
   artifact registration, cancellation, retry, and interrupted-job recovery exist.
 - A local Three.js source/candidate/collision comparison UI and multi-stage
   container/Compose deployment exist.
+- The Linux amd64 image bundles a checksum-pinned native Khronos validator and
+  verifies it with a synthetic report plus container legal-file smoke.
 - Future work is authentication, bundle intake, editing, distributed workers,
   engine proof, and a documented Podman production path.
 
@@ -33,6 +35,8 @@
 - Shape-aware visual reconstruction behind explicit experimental policy.
 - Deterministic proof rendering and engine-specific physics labs.
 - LOD families, texture/PBR diagnostics, and editable Blender handoff.
+- Verified arm64 validator packaging, automated SBOM/advisory monitoring, and
+  signed/reproducible third-party artifact provenance.
 
 ## Native-code triggers
 

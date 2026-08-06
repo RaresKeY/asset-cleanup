@@ -18,6 +18,9 @@
   decision explicitly vendors them with provenance and update procedure.
 - Keep all third-party attribution outside `vendored/` in root
   `THIRD_PARTY_NOTICES.md`.
+- Verify externally downloaded release artifacts before extraction, retain all
+  required license/notice material in redistributed images, and fail closed on
+  unsupported platforms.
 
 ## Review gates
 
@@ -30,6 +33,7 @@
 
 ## Gaps
 
-- A vulnerability-scanning and lockfile update cadence is not yet selected.
+- Upstream advisory/issue/user-report monitoring and signed/reproducible
+  artifact verification are manual; a scheduled policy is not yet selected.
 - Native ABI and wheel platform support will be documented after profiling.
 

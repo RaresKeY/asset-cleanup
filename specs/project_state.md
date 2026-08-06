@@ -20,8 +20,11 @@ and OCI container build. CLI and web workers use the same typed Recipe contract.
 - Collision candidate generation and neutral sidecar/GLB export for primitive,
   convex, CoACD (when installed), and static trimesh modes.
 - Structural validation, geometry distance, scene/appearance inventories,
-  optional fixed-argument glTF Validator, collision acceptance, metrics, and
+  bounded fixed-argument glTF validation, collision acceptance, metrics, and
   staged manifests/artifacts/events/hashes.
+- The Linux amd64 OCI image bundles the SHA-256-pinned official Khronos glTF
+  Validator native CLI, preserves its license/notices, and supplies bounded
+  structural-conformance evidence without a Node/Dart runtime.
 - Local workspaces, deduplicated sources, workspace-owned persistent candidate
   threads, transactional job/event/artifact state, child processing,
   cancellation/recovery, SSE plus normalized JSON event history, verified
@@ -41,6 +44,8 @@ and OCI container build. CLI and web workers use the same typed Recipe contract.
   quantization/compression, and Blender/gltfpack/glTF Transform/Godot execution.
 - Authentication, authorization, multi-user quotas, remote storage, and
   multi-worker coordination.
+- A bundled Linux arm64 validator, source-reproducible native build, or signed
+  upstream artifact verification.
 
 ## Compatibility status
 

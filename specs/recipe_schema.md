@@ -53,8 +53,10 @@ planning blocker rather than a silent no-op.
 Shape configuration honors `enabled`, plane/cylinder/sphere/box switches,
 deterministic sample budget, support thresholds, and cylinder filters. It has no
 cone, RANSAC, or minimum-triangle-saving recipe fields. Validation executes
-structural, geometry, scene inventory, appearance inventory, optional external
-validator, warning, and collision gates; appearance cannot pass without a renderer.
+structural, geometry, scene inventory, appearance inventory, external validator,
+warning, and collision gates; appearance cannot pass without a renderer.
+External validator warnings participate in `fail_on_warning` without being
+misreported as structural errors.
 
 ## Web-service policy
 
@@ -109,9 +111,11 @@ destructive merge, hole fill, or simplification rather than silently losing them
 `close`, `balanced`, and `distant` select error fractions of 0.001, 0.0025, and
 0.01 of the candidate diagonal with silhouette thresholds 0.995, 0.98, and
 0.95. `collision` preserves visual geometry and turns off appearance comparison.
-Quality presets request the external glTF validation gate. When its executable
-is unavailable, a normal run remains `candidate`; when available it is invoked
-with fixed arguments and captured in validation evidence.
+Quality presets request the external glTF validation gate. The official Linux
+amd64 OCI image supplies the pinned provider. A host-native run without the
+executable remains `candidate`; when present, the adapter uses its fixed
+identity, mode-0600 private bounded configuration, fixed arguments,
+timeout/output limits, exact report-version check, and captured provenance.
 
 ## Gaps
 

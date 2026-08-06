@@ -92,6 +92,19 @@ jobs:
       - name: Build image
         run: docker build --tag asset-cleanup:ci .
 
+      - name: Verify bundled glTF Validator and notices
+        run: |
+          docker run --rm --read-only asset-cleanup:ci sh -ceu '
+            test -x /usr/local/bin/gltf_validator
+            test -s /usr/share/licenses/gltf-validator/LICENSE
+            test -s /usr/share/doc/gltf-validator/NOTICES
+            test -s /usr/share/doc/asset-cleanup/THIRD_PARTY_NOTICES.md
+          '
+          docker run --rm --read-only \
+            --tmpfs /tmp:rw,noexec,nosuid,nodev,size=8m \
+            --env HOME=/tmp \
+            asset-cleanup:ci python -c "from pathlib import Path; from asset_cleanup.validation import GLTF_VALIDATOR_VERSION, run_gltf_validator; p=Path('/tmp/minimal.gltf'); p.write_text('{\"asset\":{\"version\":\"2.0\"}}', encoding='utf-8'); r=run_gltf_validator(p, '/usr/local/bin/gltf_validator'); assert r['passed'], r; assert r['provider']['version'] == GLTF_VALIDATOR_VERSION"
+
       - name: Start hardened container and probe health
         run: |
           docker volume create asset-cleanup-ci-data
