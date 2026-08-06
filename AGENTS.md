@@ -37,3 +37,10 @@ files in `design/` before changing product direction.
 - Never commit generated workspaces, uploaded models, dependency caches, or
   secrets.
 
+## External source mirror
+
+- GitHub `main` is the canonical source tree. After merged project changes,
+  refresh the plain-file Google Drive mirror at `RawProjects/asset-cleanup`.
+- Preserve existing Drive file identities when replacing files. Mirror the
+  committed paths and bytes, but exclude `.git`, virtual environments,
+  dependency caches, build products, and user-owned asset/workspace data.
