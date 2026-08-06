@@ -12,25 +12,6 @@ the fully expanded `resolved_recipe.yaml`, never just a preset name.
 installed implementation. `recipe init`, `validate`, and `explain` use the same
 model validators as execution.
 
-## Local-service resource policy
-
-The web service applies an immutable `RecipeCeilings` policy after canonical
-Recipe validation. Recipes may lower resource ceilings or raise inverse-cost
-floors, but cannot make the service accept more work. Rejection does not clamp
-or rewrite the recipe, so its submitted canonical serialization and hash retain
-their meaning. `/api/v1/recipes/validate`, both job-creation routes, retries,
-and the worker enforce the same policy. API rejection is HTTP 422 with code
-`recipe_exceeds_server_policy` and path-sorted `violations` containing the
-requested value and `maximum` or `minimum`.
-
-Default upper bounds are 1 GiB input, 100,000 scene nodes, 10,000 meshes,
-50,000,000 vertices, 50,000,000 triangles, 268,435,456 texture pixels, 3,600
-seconds, 8 GiB memory, 100,000 deterministic inspection samples, 32 collision
-shapes, 16 collision hulls, and 64 vertices per hull. Default lower bounds are
-128 primitive-support samples, 0.005 support-area fraction, and five cylinder
-axial bins. The capability response publishes these effective canonical paths
-and values.
-
 ## Top-level fields
 
 | Field | Meaning |
@@ -75,6 +56,50 @@ cone, RANSAC, or minimum-triangle-saving recipe fields. Validation executes
 structural, geometry, scene inventory, appearance inventory, optional external
 validator, warning, and collision gates; appearance cannot pass without a renderer.
 
+## Web-service policy
+
+Recipe resource settings are per-run requests, not permission to enlarge the
+service's resource budget. A web-service instance has an immutable
+`RecipeCeilings` policy. Its current defaults map to canonical recipe paths as
+follows; an operator can configure different positive instance-owned bounds:
+
+| Canonical recipe path | Bound | Default |
+|---|---:|---:|
+| `settings.collision.max_hulls` | maximum | 16 |
+| `settings.collision.max_shapes` | maximum | 32 |
+| `settings.collision.max_vertices_per_hull` | maximum | 64 |
+| `settings.inspection.deterministic_samples` | maximum | 100,000 |
+| `settings.limits.max_input_bytes` | maximum | 1,073,741,824 |
+| `settings.limits.max_memory_bytes` | maximum | 8,589,934,592 |
+| `settings.limits.max_meshes` | maximum | 10,000 |
+| `settings.limits.max_runtime_seconds` | maximum | 3,600 |
+| `settings.limits.max_scene_nodes` | maximum | 100,000 |
+| `settings.limits.max_texture_pixels` | maximum | 268,435,456 |
+| `settings.limits.max_triangles` | maximum | 50,000,000 |
+| `settings.limits.max_vertices` | maximum | 50,000,000 |
+| `settings.shape_detection.cylinder_min_axial_bins` | minimum | 5 |
+| `settings.shape_detection.min_support_area_fraction` | minimum | 0.005 |
+| `settings.shape_detection.min_support_samples` | minimum | 128 |
+
+These are operator-owned evidence and complexity floors.
+`min_support_samples` and `cylinder_min_axial_bins` are post-fit evidence
+acceptance thresholds that reject primitive evidence supported by too few
+samples or axial sections. `min_support_area_fraction` rejects undersized planar
+support and chiefly bounds reported planar-region cardinality. Effective
+maximums and minimums are instance configuration and are reported by the
+capabilities API rather than embedded into a submitted recipe.
+
+Full canonical recipes and server-expanded browser recipes must satisfy every
+bound before a job can be persisted. The service rejects a violation with a
+structured `422 recipe_exceeds_server_policy` response; it never silently
+clamps a value, because doing so would make the stored canonical recipe and its
+hash misrepresent the work that will run.
+
+The CLI remains governed by the explicit limits in its resolved recipe. The
+additional `RecipeCeilings` boundary belongs to the long-lived web service and
+worker. A recipe may request a value inside each permitted interval but cannot
+broaden an operator-owned maximum or weaken an evidence/complexity floor.
+
 Normal and boundary preservation have measured validation gates. The adapter
 cannot promise material boundaries or UV seams; requested promises block
 destructive merge, hole fill, or simplification rather than silently losing them.
@@ -92,7 +117,9 @@ with fixed arguments and captured in validation evidence.
 
 - Recipe migrations, profile inheritance, external adapter version selection,
   and signed/remote recipe provenance are not implemented.
-- Service-policy version identities, per-principal quotas, and administrative
-  runtime reconfiguration are not implemented.
 - `deterministic` records intent, not a promise of bitwise equality across OS,
   Python, NumPy, SciPy, or native dependency versions.
+- Service ceilings are process configuration rather than per-workspace or
+  authenticated-principal quotas; those policy layers do not exist yet.
+- Policy uses explicit per-field bounds rather than an aggregate model for
+  interactions between otherwise valid high-cost settings.

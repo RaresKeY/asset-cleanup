@@ -46,15 +46,20 @@ def _set_recipe_value(recipe: Recipe, path: str, value: int | float) -> Recipe:
     return Recipe.model_validate(data)
 
 
-def _http_scope(headers: list[tuple[bytes, bytes]] | None = None) -> dict[str, Any]:
+def _http_scope(
+    headers: list[tuple[bytes, bytes]] | None = None,
+    *,
+    method: str = "GET",
+    path: str = "/",
+) -> dict[str, Any]:
     return {
         "type": "http",
         "asgi": {"version": "3.0"},
         "http_version": "1.1",
-        "method": "GET",
+        "method": method,
         "scheme": "http",
-        "path": "/",
-        "raw_path": b"/",
+        "path": path,
+        "raw_path": path.encode("ascii"),
         "query_string": b"",
         "root_path": "",
         "headers": headers or [],
@@ -202,6 +207,123 @@ def test_request_body_middleware_rejects_duplicate_content_length(tmp_path: Path
     assert not called
     assert sent[0]["status"] == 400
     assert json.loads(sent[1]["body"]) == {"detail": "invalid Content-Length"}
+
+
+def test_request_body_middleware_rejects_duplicate_content_type_before_tier_selection(
+    tmp_path: Path,
+) -> None:
+    called = False
+    sent: list[dict[str, Any]] = []
+
+    async def downstream(*_arguments: Any) -> None:
+        nonlocal called
+        called = True
+
+    async def receive() -> dict[str, Any]:
+        return {"type": "http.request", "body": b"x" * 65, "more_body": False}
+
+    async def send(message: dict[str, Any]) -> None:
+        sent.append(message)
+
+    middleware = BoundedRequestBodyMiddleware(
+        downstream,
+        max_request_body_bytes=64,
+        max_multipart_body_bytes=128,
+        spool_directory=tmp_path,
+    )
+    scope = _http_scope(
+        [
+            (b"content-type", b"application/json"),
+            (b"content-type", b"multipart/form-data"),
+        ]
+    )
+    asyncio.run(middleware(scope, receive, send))
+
+    assert not called
+    assert sent[0]["status"] == 400
+    assert json.loads(sent[1]["body"]) == {"detail": "invalid Content-Type"}
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/v1/assets/import",
+        "/api/v1/assets",
+        f"/api/v1/workspaces/{'a' * 32}/sources",
+    ],
+)
+def test_request_body_middleware_reserves_multipart_allowance_for_upload_routes(
+    tmp_path: Path, path: str
+) -> None:
+    received: list[dict[str, Any]] = []
+
+    async def downstream(_scope: dict[str, Any], receive: Any, _send: Any) -> None:
+        received.append(await receive())
+
+    async def receive() -> dict[str, Any]:
+        return {"type": "http.request", "body": b"x" * 65, "more_body": False}
+
+    async def send(_message: dict[str, Any]) -> None:
+        return None
+
+    middleware = BoundedRequestBodyMiddleware(
+        downstream,
+        max_request_body_bytes=64,
+        max_multipart_body_bytes=128,
+        spool_directory=tmp_path,
+    )
+    scope = _http_scope(
+        [(b"content-type", b"multipart/form-data; boundary=asset-cleanup")],
+        method="POST",
+        path=path,
+    )
+    asyncio.run(middleware(scope, receive, send))
+
+    assert received == [{"type": "http.request", "body": b"x" * 65, "more_body": False}]
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("POST", "/api/v1/workspaces"),
+        ("GET", "/api/v1/assets/import"),
+        ("POST", "/api/v1/assets/import/extra"),
+        ("POST", f"/api/v1/workspaces/{'a' * 31}/sources"),
+        ("POST", f"/api/v1/workspaces/{'A' * 32}/sources"),
+    ],
+)
+def test_request_body_middleware_uses_general_limit_outside_upload_routes(
+    tmp_path: Path, method: str, path: str
+) -> None:
+    called = False
+    sent: list[dict[str, Any]] = []
+
+    async def downstream(*_arguments: Any) -> None:
+        nonlocal called
+        called = True
+
+    async def receive() -> dict[str, Any]:
+        return {"type": "http.request", "body": b"x" * 65, "more_body": False}
+
+    async def send(message: dict[str, Any]) -> None:
+        sent.append(message)
+
+    middleware = BoundedRequestBodyMiddleware(
+        downstream,
+        max_request_body_bytes=64,
+        max_multipart_body_bytes=128,
+        spool_directory=tmp_path,
+    )
+    scope = _http_scope(
+        [(b"content-type", b"multipart/form-data; boundary=asset-cleanup")],
+        method=method,
+        path=path,
+    )
+    asyncio.run(middleware(scope, receive, send))
+
+    assert not called
+    assert sent[0]["status"] == 413
+    assert json.loads(sent[1]["body"]) == {"detail": "request exceeds configured limit"}
 
 
 def test_request_body_middleware_accepts_leading_zero_content_length(tmp_path: Path) -> None:
@@ -547,7 +669,7 @@ def test_recipe_policy_rejects_each_resource_maximum(
 
 
 @pytest.mark.parametrize(("path", "minimum"), _RECIPE_MINIMUM_CASES)
-def test_recipe_policy_rejects_each_inverse_cost_minimum(
+def test_recipe_policy_rejects_each_policy_minimum(
     tmp_path: Path, path: str, minimum: int | float
 ) -> None:
     app = create_app(data_root=tmp_path / "data", embedded_worker=False)
@@ -615,8 +737,13 @@ def test_recipe_policy_is_identical_for_global_workspace_retry_and_capabilities(
     assert policy["recipe"] == config.recipe_ceilings.to_dict()
     assert policy["request_body"] == {
         "max_upload_bytes": config.max_upload_bytes,
-        "max_non_multipart_bytes": config.max_request_body_bytes,
-        "max_multipart_bytes": config.max_multipart_body_bytes,
+        "max_general_bytes": config.max_request_body_bytes,
+        "max_upload_multipart_bytes": config.max_multipart_body_bytes,
+        "multipart_upload_paths": [
+            "/api/v1/assets/import",
+            "/api/v1/assets",
+            "/api/v1/workspaces/{workspace_id}/sources",
+        ],
     }
 
 

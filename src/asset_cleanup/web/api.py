@@ -54,6 +54,15 @@ _ASSET_ID = re.compile(r"^sha256-[0-9a-f]{64}$")
 _JOB_ID = re.compile(r"^[0-9a-f]{32}$")
 _WORKSPACE_ID = re.compile(r"^[0-9a-f]{32}$")
 _FORMAT_SUFFIX = {"glb": ".glb", "gltf": ".gltf", "obj": ".obj", "ply": ".ply", "stl": ".stl"}
+_MULTIPART_UPLOAD_PATHS = (
+    f"{API_PREFIX}/assets/import",
+    f"{API_PREFIX}/assets",
+    f"{API_PREFIX}/workspaces/{{workspace_id}}/sources",
+)
+_MULTIPART_UPLOAD_PATH = re.compile(
+    rf"^(?:{re.escape(API_PREFIX)}/assets(?:/import)?|"
+    rf"{re.escape(API_PREFIX)}/workspaces/[0-9a-f]{{32}}/sources)$"
+)
 
 
 class BoundedRequestBodyMiddleware:
@@ -77,10 +86,23 @@ class BoundedRequestBodyMiddleware:
             await self.app(scope, receive, send)
             return
         header_items = [(key.lower(), value) for key, value in scope.get("headers", [])]
-        headers = {key: value for key, value in header_items}
-        content_type = headers.get(b"content-type", b"").lower()
+        content_types = [value for key, value in header_items if key == b"content-type"]
+        if len(content_types) > 1:
+            await JSONResponse(status_code=400, content={"detail": "invalid Content-Type"})(
+                scope, receive, send
+            )
+            return
+        content_type = content_types[0].lower() if content_types else b""
         multipart = content_type.split(b";", 1)[0].strip() == b"multipart/form-data"
-        max_body_bytes = self.max_multipart_body_bytes if multipart else self.max_request_body_bytes
+        upload_route = (
+            scope.get("method") == "POST"
+            and _MULTIPART_UPLOAD_PATH.fullmatch(str(scope.get("path", ""))) is not None
+        )
+        max_body_bytes = (
+            self.max_multipart_body_bytes
+            if multipart and upload_route
+            else self.max_request_body_bytes
+        )
         content_lengths = [value for key, value in header_items if key == b"content-length"]
         if len(content_lengths) > 1:
             await JSONResponse(status_code=400, content={"detail": "invalid Content-Length"})(
@@ -904,8 +926,9 @@ def create_app(
                 "recipe": config.recipe_ceilings.to_dict(),
                 "request_body": {
                     "max_upload_bytes": config.max_upload_bytes,
-                    "max_non_multipart_bytes": config.max_request_body_bytes,
-                    "max_multipart_bytes": config.max_multipart_body_bytes,
+                    "max_general_bytes": config.max_request_body_bytes,
+                    "max_upload_multipart_bytes": config.max_multipart_body_bytes,
+                    "multipart_upload_paths": list(_MULTIPART_UPLOAD_PATHS),
                 },
             },
         }
