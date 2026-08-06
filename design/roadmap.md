@@ -18,12 +18,14 @@
 - Write complete candidate packages and manifests.
 - Provide `inspect`, `plan`, `run`, `validate`, `capabilities`, and config tools.
 
-### Containerized web application
+### Containerized web application — implemented first slice
 
-- Add durable workspaces/jobs, bounded uploads, structured progress, artifacts,
-  and cancellation.
-- Add a local Three.js viewer with source/candidate/collision comparison.
-- Ship multi-stage container builds and compose/Podman examples.
+- Durable local workspaces/jobs, bounded single-file uploads, structured progress,
+  artifact registration, cancellation, retry, and interrupted-job recovery exist.
+- A local Three.js source/candidate/collision comparison UI and multi-stage
+  container/Compose deployment exist.
+- Future work is authentication, bundle intake, editing, distributed workers,
+  engine proof, and a documented Podman production path.
 
 ### Quality expansion
 
@@ -45,4 +47,3 @@ distance queries, region fitting, and mesh assembly; orchestration remains Pytho
   end-to-end candidate format stabilizes.
 - Benchmark assets, hardware matrix, and quality thresholds need owner approval.
 - Packaging beyond the OCI image and Python wheel remains unplanned.
-

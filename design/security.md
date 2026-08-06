@@ -27,8 +27,9 @@ escape the service.
 - Recipes contain only versioned typed data and a small declarative condition
   vocabulary—no Python, templates, shell, or arbitrary executable paths.
 - External adapters receive fixed executable identities and argument arrays.
-- Jobs run in separate process groups with bounded CPU, address space, files,
-  processes, output bytes, and time where the platform supports them.
+- Jobs run in separate process groups; the current POSIX child enforces CPU,
+  address-space, open-file, and time limits, while Compose/container limits add
+  process/memory/CPU boundaries.
 - Cancellation terminates the process group and records whether escalation was
   needed.
 - Stage output is written under an isolated staging directory, validated,
@@ -42,8 +43,8 @@ escape the service.
 - Inline rendering is limited to sanitized derived preview GLB and approved
   images. Raw uploads download as attachments.
 - Artifact access resolves registered immutable IDs beneath the data root.
-- The image runs non-root, drops capabilities, supports a read-only root
-  filesystem, and never mounts a container-engine socket.
+- The image runs non-root; Compose drops capabilities, uses read-only root and
+  noexec tmpfs, and never mounts a container-engine socket.
 - A stronger deployment separates API and worker; the worker can run without a
   network while sharing only the data volume.
 - The first release is intentionally unauthenticated and local-only. Remote
@@ -55,4 +56,3 @@ escape the service.
   Linux/macOS/Windows design.
 - Fuzz corpora and decompression-bomb fixtures are not yet assembled.
 - Remote multi-user authorization, quotas, and audit policy are deferred.
-

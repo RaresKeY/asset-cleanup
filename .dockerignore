@@ -1,0 +1,32 @@
+# Source control and local development state
+.git
+.gitignore
+.venv
+venv
+__pycache__
+*.py[cod]
+.mypy_cache
+.pytest_cache
+.ruff_cache
+.coverage
+
+# JavaScript dependency/build state
+node_modules
+web/node_modules
+web/dist
+
+# Build products and user-owned asset data
+build
+dist
+*.egg-info
+data
+workspaces
+artifacts
+.asset-cleanup
+
+# Local configuration and editor files
+.env
+.env.*
+.DS_Store
+.idea
+.vscode
