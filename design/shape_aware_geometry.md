@@ -70,3 +70,4 @@ extension. The Python recipe and manifest contract remains stable.
 - Cone/torus and repeated-structure fitting have lower priority than planes,
   cylinders, spheres, and boxes.
 - Skinned/deforming topology needs a separate skin-weight and animation policy.
+

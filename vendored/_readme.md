@@ -17,3 +17,4 @@ Third-party attribution and license identifiers/links belong only in root
 
 - Exact dependency versions and integrity hashes await executable packaging.
 - Automated notice/SBOM generation is not yet configured.
+

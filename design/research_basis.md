@@ -92,3 +92,4 @@ presets. Benchmark results must tune them.
   measured tolerance contract.
 - Primitive reconstruction and collision fitting need a public benchmark report
   before defaults are promoted from design to specs.
+

@@ -25,3 +25,4 @@ git status --short
 - Formatting, type, unit, integration, container, and end-to-end checks will be
   added with executable code.
 - Link checking is currently a review action rather than automated CI.
+

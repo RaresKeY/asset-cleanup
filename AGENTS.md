@@ -36,3 +36,4 @@ files in `design/` before changing product direction.
 - Run the documented checks in `specs/verification.md`.
 - Never commit generated workspaces, uploaded models, dependency caches, or
   secrets.
+

@@ -33,3 +33,4 @@ committed. Small synthetic test fixtures require documented provenance.
 
 - Fixture size/provenance limits need to be fixed with the first parser tests.
 - Release artifact signing and SBOM retention are not yet specified.
+
