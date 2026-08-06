@@ -204,6 +204,7 @@ class BrowserCollisionRecipe(StrictRequest):
 
 class BrowserValidationRecipe(StrictRequest):
     compare_geometry: bool = True
+    gltf_validator: bool = True
     compare_scene_inventory: bool = True
     compare_appearance: bool = False
 
@@ -381,7 +382,7 @@ def _recipe_from_web(value: BrowserRecipe | Recipe | dict[str, Any]) -> Recipe:
     validation.update(
         {
             "compare_geometry": bool(validation_input.get("compare_geometry", True)),
-            "gltf_validator": False,
+            "gltf_validator": bool(validation_input.get("gltf_validator", True)),
             "compare_scene_inventory": bool(validation_input.get("compare_scene_inventory", True)),
             "compare_appearance": bool(validation_input.get("compare_appearance", False)),
         }
@@ -457,6 +458,7 @@ def _browser_recipe_from_canonical(recipe: Recipe) -> BrowserRecipe | None:
                 },
                 "validation": {
                     "compare_geometry": recipe.settings.validation.compare_geometry,
+                    "gltf_validator": recipe.settings.validation.gltf_validator,
                     "compare_scene_inventory": recipe.settings.validation.compare_scene_inventory,
                     "compare_appearance": recipe.settings.validation.compare_appearance,
                 },
