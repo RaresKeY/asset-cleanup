@@ -1,0 +1,44 @@
+# Overlay for a stronger deployment boundary. Start it with:
+# docker compose -f compose.yaml -f compose.secure.yaml --profile split-worker up
+#
+# The API remains loopback-published by compose.yaml. The worker has no network
+# namespace and shares only the persistent data volume with the API.
+services:
+  app:
+    command:
+      - asset-cleanup
+      - serve
+      - --data-root
+      - /data
+      - --host
+      - 0.0.0.0
+      - --web-root
+      - /app/web
+      - --allowed-host
+      - 127.0.0.1
+      - --allowed-host
+      - localhost
+      - --no-embedded-worker
+
+  worker:
+    image: asset-cleanup:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["asset-cleanup", "worker", "--data-root", "/data"]
+    profiles: ["split-worker"]
+    volumes:
+      - asset_cleanup_data:/data
+    network_mode: none
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=512m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 4g
+    cpus: "2.0"
+    restart: unless-stopped

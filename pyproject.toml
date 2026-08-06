@@ -1,0 +1,62 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "asset-cleanup"
+version = "0.1.0"
+description = "Inspectable, reproducible post-generation mesh and collision processing"
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [{ name = "RaresKeY" }]
+dependencies = [
+  "fast-simplification>=0.1.11,<1",
+  "networkx>=3.3,<4",
+  "numpy>=2.0,<3",
+  "pillow>=11,<13",
+  "pydantic>=2.11,<3",
+  "PyYAML>=6.0,<7",
+  "rich>=13.9,<15",
+  "scipy>=1.14,<2",
+  "trimesh>=4.8,<5",
+  "typer>=0.16,<1",
+]
+
+[project.optional-dependencies]
+collision = ["coacd>=1.0,<2"]
+web = [
+  "aiosqlite>=0.20,<1",
+  "fastapi>=0.115,<1",
+  "python-multipart>=0.0.20,<1",
+  "uvicorn[standard]>=0.34,<1",
+]
+dev = [
+  "httpx>=0.28,<1",
+  "mypy>=1.15,<2",
+  "pytest>=8.3,<9",
+  "pytest-cov>=6,<8",
+  "ruff>=0.11,<1",
+  "types-PyYAML>=6.0.12,<7",
+]
+
+[project.scripts]
+asset-cleanup = "asset_cleanup.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/asset_cleanup"]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-config --strict-markers"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["B", "E", "F", "I", "UP"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+packages = ["asset_cleanup"]

@@ -1,0 +1,27 @@
+name: asset-cleanup
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: asset-cleanup:local
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - asset_cleanup_data:/data
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=512m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 4g
+    cpus: "2.0"
+    restart: unless-stopped
+
+volumes:
+  asset_cleanup_data:

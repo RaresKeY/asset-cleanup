@@ -1,30 +1,36 @@
-# Planned external adapters
+# External adapters
 
-## Candidate boundaries
+## Implemented dependency boundaries
 
-| Component | Desired role | Boundary |
+| Component | Current boundary |
+|---|---|
+| trimesh | Imported only after source probe/reference checks. Core calls scene loading with `process=False`; it owns limits, source policy, output layout, and validation reporting. |
+| fast-simplification | `geometry.simplify_mesh` is a narrow in-process QEM adapter. Core owns requested target selection, attribute-loss guard, and quality gate/report. |
+| CoACD | Optional import inside collision generation. Explicit `coacd` recipes are blocked during planning if unavailable. |
+| Pydantic / PyYAML | Recipe parsing only. Recipe data cannot name a program or evaluate code. |
+
+Capability discovery reports packages plus fixed executable names; it never
+executes a recipe-provided command. `gltf-validator` now has a fixed-argument
+adapter during validation when discovered. `gltfpack`, `gltf-transform`,
+`blender`, and `godot` remain detected-only.
+
+## Planned boundaries
+
+| Component | Desired role | Required boundary |
 |---|---|---|
-| trimesh | General mesh/scene ingestion, inspection, repair helpers, export | Python library; preserve source scene inventory explicitly |
-| meshoptimizer / glTF Transform / gltfpack | Error-aware simplification and runtime delivery optimization | Library or fixed-argument CLI; version-sensitive flags |
-| fast-simplification | In-process QEM candidate generation | Optional Python/native package; capability-gated |
-| CoACD | Offline convex decomposition and box approximation | Optional Python/native adapter with capped settings and seed |
-| Blender | Planar cleanup, UV, baking, authoring, and proof rendering | Optional headless adapter; no arbitrary user scripts |
-| xatlas | New UV unwrap/packing | Optional native adapter; topology locked before tangent bake |
-| Khronos glTF Validator | Structural glTF validation | Fixed-argument CLI; validator does not prove visual quality |
-| TRELLIS replay provider | Decode retained post-stage capture and rebake PBR field | Explicit provider contract; `.bin` is not parsed generically |
-| Godot | Import and physics validation | Optional engine adapter pinned to target version |
-| PCL sample consensus | Native plane/cylinder/sphere/cone candidate generation | BSD-licensed research-to-native path behind a narrow adapter |
-| earcut.hpp | Triangulate validated planar boundaries and holes | Optional future native helper; reject invalid polygons before use |
-| MikkTSpace | Tangent generation after final topology/UV lock | Reference-compatible native interface |
-| Open3D / point-cloud-utils | Surface sampling and distance metrics | Optional heavy metric backends; keep minimal images smaller |
-| CGAL Shape Detection | Research reference only | Relevant package is GPL/commercial; exclude from default distribution |
-
-The bootstrap revision implements none of these adapters. Their presence here is
-design inventory, not a capability claim.
+| Khronos glTF Validator | Structural conformance proof | Fixed identity/version/argv, captured report and exit status. |
+| meshoptimizer / glTF Transform / gltfpack | Runtime compression/packing | Pinned fixed-argument adapter after authoring approval; never silently changes geometry. |
+| TRELLIS replay provider | Decode retained post-stage capture/rebake PBR field | Producer-versioned, isolated contract; no generic pickle or `torch.load`. |
+| Blender / xatlas / MikkTSpace | UV, bake, tangent, editable handoff | Pinned worker adapter; no arbitrary scripts. |
+| Godot | Engine import/physics proof | Target-versioned isolated project and recorded tests. |
+| PCL sample consensus | Native primitive fitting | Narrow C/C++ extension after profiling and benchmark acceptance. |
+| earcut.hpp | Validated planar boundary triangulation | Native helper only after robust boundary/holes contract. |
+| Open3D / point-cloud-utils | Heavy distance metrics | Optional backend behind the existing neutral quality-report schema. |
+| CGAL Shape Detection | Research reference | Not a default distributable dependency because relevant packages are GPL/commercial. |
 
 ## Gaps
 
-- Final component selection, versions, hashes, and license review remain open.
-- Windows/macOS availability and GPU variants require a platform matrix.
-- TRELLIS capture schema/version negotiation requires coordination with the
-  producing repository.
+- No adapter ABI, timeout/resource envelope, version pin, golden-output fixture,
+  or platform matrix has yet been committed for any planned executable.
+- The current capability list is an informational probe, not a proof that an
+  executable's arguments or license are suitable for a release.

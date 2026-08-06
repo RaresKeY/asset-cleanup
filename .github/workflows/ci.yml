@@ -1,0 +1,123 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHONHASHSEED: "0"
+
+jobs:
+  python:
+    name: Python quality and package
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.11.33"
+          enable-cache: true
+
+      - name: Sync locked Python environment
+        run: uv sync --locked --all-extras
+
+      - name: Lint and format check
+        run: |
+          uv run ruff format --check .
+          uv run ruff check .
+
+      - name: Type check
+        run: uv run mypy src/asset_cleanup
+
+      - name: Test
+        run: uv run pytest
+
+      - name: Build distributions
+        run: uv build
+
+  frontend:
+    name: Frontend quality and build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22.16.0"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install locked frontend dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Type check, lint, test, and build
+        working-directory: web
+        run: |
+          npm run typecheck
+          npm run lint
+          npm run test
+          npm run build
+          npm audit --audit-level=high
+
+  container:
+    name: Container smoke test
+    needs: [python, frontend]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build image
+        run: docker build --tag asset-cleanup:ci .
+
+      - name: Start hardened container and probe health
+        run: |
+          docker volume create asset-cleanup-ci-data
+          docker run --detach --rm --name asset-cleanup-ci \
+            --read-only --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m \
+            --cap-drop ALL --security-opt no-new-privileges:true \
+            --pids-limit 128 --memory 2g \
+            --publish 127.0.0.1:18080:8080 \
+            --volume asset-cleanup-ci-data:/data \
+            asset-cleanup:ci
+          ready=false
+          for attempt in {1..30}; do
+            if curl --fail --silent --show-error http://127.0.0.1:18080/health/ready; then
+              ready=true
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" != true ]; then
+            docker logs asset-cleanup-ci
+            exit 1
+          fi
+          curl --fail --silent --show-error http://127.0.0.1:18080/ | grep -F '<title>Asset Cleanup</title>'
+
+      - name: Remove smoke-test resources
+        if: always()
+        run: |
+          docker rm --force asset-cleanup-ci || true
+          docker volume rm --force asset-cleanup-ci-data || true

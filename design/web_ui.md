@@ -30,19 +30,19 @@ Destructive implications are shown beside the setting that causes them. For
 example, regional reconstruction marks existing UV/bake evidence stale before
 the job is submitted.
 
-## Service architecture
+## Implemented service architecture
 
-- FastAPI exposes typed workspace, upload, inspection, recipe, job, artifact,
-  preview, and capability endpoints.
-- The same Python application library serves CLI and API callers.
-- SQLite stores workspace/job metadata; asset bytes live under a mounted data
-  root with content hashes and atomic promotion.
-- A bounded local worker executes stages out of process. Jobs have time, memory,
-  output-size, and concurrency limits and can be cancelled.
-- The frontend is a built static TypeScript application with a local Three.js
-  preview; the production container does not depend on a CDN.
-- The container runs as a non-root user, persists only the mounted data root,
-  and exposes explicit health/readiness endpoints.
+- FastAPI exposes typed workspace, single-file upload, inspection, recipe, job,
+  event, artifact, preview, capability, and health endpoints.
+- SQLite stores workspace/job/event/artifact metadata; source bytes are
+  content-addressed below the mounted data root.
+- A local worker executes each pipeline run in an isolated child process with
+  timeout, cancellation escalation, POSIX resource limits, and recovery of
+  interrupted running jobs.
+- The static React/TypeScript application uses local Three.js and SSE; the OCI
+  image contains no runtime CDN or Node build tooling.
+- The container runs non-root, persists the data root, and has live/readiness
+  endpoints; compose supports embedded or networkless split worker modes.
 
 ## Safety boundaries
 
@@ -58,11 +58,10 @@ the job is submitted.
 
 ## Gaps
 
-- The first release is single-user and local; authentication and authorization
-  are deliberately deferred.
+- The implementation is single-user/local; authentication and authorization are
+  deliberately deferred.
 - GPU rendering and distributed workers need a separate deployment design.
 - Browser-side measurement parity with the canonical server inspection needs
   explicit tests.
 - Accessibility, touch layout, and large-scene preview budgets require hands-on
   validation after implementation.
-

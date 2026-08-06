@@ -1,20 +1,19 @@
 # External component map
 
-`vendored/` is specs-like project memory for dependencies, external tools,
-source ownership, pinned interfaces, capability detection, and replacement
-plans. It does not contain third-party license text and does not imply that a
-component is copied into this repository.
+`vendored/` is specs-like project memory for dependencies, upstream tools,
+adaptor boundaries, source ownership, and replacement plans. It does not copy
+third-party source or license text. Resolved attribution belongs exclusively in
+root [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md).
 
-- [`dependency_policy.md`](dependency_policy.md) — adoption, pinning, capability,
-  security, and notice rules.
-- [`planned_adapters.md`](planned_adapters.md) — desired external-tool boundaries;
-  none are implemented in the bootstrap revision.
-
-Third-party attribution and license identifiers/links belong only in root
-[`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md).
+- [`dependency_policy.md`](dependency_policy.md) — adoption and capability rules.
+- [`python_stack.md`](python_stack.md) — current resolved Python components and ownership.
+- `web/package-lock.json` — locked frontend dependency graph; it is not copied
+  under `vendored/` because it is executable project configuration.
+- [`planned_adapters.md`](planned_adapters.md) — not-yet-executed external tool boundaries.
 
 ## Gaps
 
-- Exact dependency versions and integrity hashes await executable packaging.
-- Automated notice/SBOM generation is not yet configured.
-
+- Lockfile integrity and platform wheel hashes are in `uv.lock`; this directory
+  does not yet describe a release SBOM or container image inventory.
+- Frontend transitive ownership is lockfile-backed but does not yet have a
+  generated component-by-component SBOM under `vendored/`.
