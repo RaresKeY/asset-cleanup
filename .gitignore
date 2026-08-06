@@ -1,0 +1,20 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.coverage
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+dist/
+build/
+node_modules/
+web/dist/
+.env
+.DS_Store
+
+# Local jobs, source assets, and generated candidates are never repository data.
+data/
+workspaces/
+artifacts/
