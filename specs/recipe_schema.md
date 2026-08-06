@@ -12,6 +12,25 @@ the fully expanded `resolved_recipe.yaml`, never just a preset name.
 installed implementation. `recipe init`, `validate`, and `explain` use the same
 model validators as execution.
 
+## Local-service resource policy
+
+The web service applies an immutable `RecipeCeilings` policy after canonical
+Recipe validation. Recipes may lower resource ceilings or raise inverse-cost
+floors, but cannot make the service accept more work. Rejection does not clamp
+or rewrite the recipe, so its submitted canonical serialization and hash retain
+their meaning. `/api/v1/recipes/validate`, both job-creation routes, retries,
+and the worker enforce the same policy. API rejection is HTTP 422 with code
+`recipe_exceeds_server_policy` and path-sorted `violations` containing the
+requested value and `maximum` or `minimum`.
+
+Default upper bounds are 1 GiB input, 100,000 scene nodes, 10,000 meshes,
+50,000,000 vertices, 50,000,000 triangles, 268,435,456 texture pixels, 3,600
+seconds, 8 GiB memory, 100,000 deterministic inspection samples, 32 collision
+shapes, 16 collision hulls, and 64 vertices per hull. Default lower bounds are
+128 primitive-support samples, 0.005 support-area fraction, and five cylinder
+axial bins. The capability response publishes these effective canonical paths
+and values.
+
 ## Top-level fields
 
 | Field | Meaning |
@@ -73,5 +92,7 @@ with fixed arguments and captured in validation evidence.
 
 - Recipe migrations, profile inheritance, external adapter version selection,
   and signed/remote recipe provenance are not implemented.
+- Service-policy version identities, per-principal quotas, and administrative
+  runtime reconfiguration are not implemented.
 - `deterministic` records intent, not a promise of bitwise equality across OS,
   Python, NumPy, SciPy, or native dependency versions.

@@ -1,15 +1,20 @@
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import zipfile
 from pathlib import Path
+from typing import Any
 
+import pytest
 import trimesh
 from fastapi.testclient import TestClient
 
 from asset_cleanup.models import Recipe
 from asset_cleanup.web import WebConfig, create_app
+from asset_cleanup.web.api import BoundedRequestBodyMiddleware
+from asset_cleanup.web.config import RecipeCeilings
 
 
 def _glb() -> bytes:
@@ -29,6 +34,33 @@ def _recipe() -> Recipe:
         }
     )
     return Recipe.model_validate(data)
+
+
+def _set_recipe_value(recipe: Recipe, path: str, value: int | float) -> Recipe:
+    data = recipe.model_dump(mode="python")
+    target: dict[str, Any] = data
+    parts = path.split(".")
+    for part in parts[:-1]:
+        target = target[part]
+    target[parts[-1]] = value
+    return Recipe.model_validate(data)
+
+
+def _http_scope(headers: list[tuple[bytes, bytes]] | None = None) -> dict[str, Any]:
+    return {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "GET",
+        "scheme": "http",
+        "path": "/",
+        "raw_path": b"/",
+        "query_string": b"",
+        "root_path": "",
+        "headers": headers or [],
+        "client": ("127.0.0.1", 1),
+        "server": ("testserver", 80),
+    }
 
 
 def test_upload_is_content_addressed_and_content_sniffed(tmp_path: Path) -> None:
@@ -88,6 +120,244 @@ def test_multipart_body_is_bounded_before_parser_even_when_length_lies(tmp_path:
     assert response.status_code == 413
 
 
+def test_non_multipart_body_is_bounded_by_declared_and_received_size(tmp_path: Path) -> None:
+    config = WebConfig(data_root=tmp_path / "data", max_request_body_bytes=64)
+    app = create_app(config)
+    with TestClient(app) as client:
+        declared = client.post(
+            "/api/v1/workspaces",
+            content=b"{}",
+            headers={"Content-Type": "application/json", "Content-Length": "65"},
+        )
+        streamed = client.post(
+            "/api/v1/workspaces",
+            content=iter((b"{" + b'"name":"', b"x" * 80, b'"}')),
+            headers={"Content-Type": "application/json", "Content-Length": "10"},
+        )
+        small = client.post("/api/v1/workspaces", json={"name": "bounded"})
+
+    expected = {"detail": "request exceeds configured limit"}
+    assert declared.status_code == 413
+    assert declared.json() == expected
+    assert streamed.status_code == 413
+    assert streamed.json() == expected
+    assert small.status_code == 201
+
+
+@pytest.mark.parametrize("content_length", [b"+1", b" 1", b"1 ", b"1_0", b"-1"])
+def test_request_body_middleware_rejects_non_decimal_content_length(
+    tmp_path: Path, content_length: bytes
+) -> None:
+    called = False
+    sent: list[dict[str, Any]] = []
+
+    async def downstream(*_arguments: Any) -> None:
+        nonlocal called
+        called = True
+
+    messages = iter([{"type": "http.request", "body": b"", "more_body": False}])
+
+    async def receive() -> dict[str, Any]:
+        return next(messages)
+
+    async def send(message: dict[str, Any]) -> None:
+        sent.append(message)
+
+    middleware = BoundedRequestBodyMiddleware(
+        downstream,
+        max_request_body_bytes=64,
+        max_multipart_body_bytes=128,
+        spool_directory=tmp_path,
+    )
+    asyncio.run(middleware(_http_scope([(b"content-length", content_length)]), receive, send))
+
+    assert not called
+    assert sent[0]["status"] == 400
+    assert json.loads(sent[1]["body"]) == {"detail": "invalid Content-Length"}
+
+
+def test_request_body_middleware_rejects_duplicate_content_length(tmp_path: Path) -> None:
+    called = False
+    sent: list[dict[str, Any]] = []
+
+    async def downstream(*_arguments: Any) -> None:
+        nonlocal called
+        called = True
+
+    async def receive() -> dict[str, Any]:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message: dict[str, Any]) -> None:
+        sent.append(message)
+
+    middleware = BoundedRequestBodyMiddleware(
+        downstream,
+        max_request_body_bytes=64,
+        max_multipart_body_bytes=128,
+        spool_directory=tmp_path,
+    )
+    scope = _http_scope([(b"content-length", b"0"), (b"content-length", b"0")])
+    asyncio.run(middleware(scope, receive, send))
+
+    assert not called
+    assert sent[0]["status"] == 400
+    assert json.loads(sent[1]["body"]) == {"detail": "invalid Content-Length"}
+
+
+def test_request_body_middleware_accepts_leading_zero_content_length(tmp_path: Path) -> None:
+    received: list[dict[str, Any]] = []
+
+    async def downstream(_scope: dict[str, Any], receive: Any, _send: Any) -> None:
+        received.append(await receive())
+
+    messages = iter([{"type": "http.request", "body": b"", "more_body": False}])
+
+    async def receive() -> dict[str, Any]:
+        return next(messages)
+
+    async def send(_message: dict[str, Any]) -> None:
+        return None
+
+    middleware = BoundedRequestBodyMiddleware(
+        downstream,
+        max_request_body_bytes=64,
+        max_multipart_body_bytes=128,
+        spool_directory=tmp_path,
+    )
+    asyncio.run(middleware(_http_scope([(b"content-length", b"000")]), receive, send))
+
+    assert received == [{"type": "http.request", "body": b"", "more_body": False}]
+
+
+def test_request_body_middleware_handles_very_long_decimal_content_length(
+    tmp_path: Path,
+) -> None:
+    async def exercise(content_length: bytes) -> tuple[bool, list[dict[str, Any]]]:
+        called = False
+        sent: list[dict[str, Any]] = []
+
+        async def downstream(_scope: dict[str, Any], receive: Any, _send: Any) -> None:
+            nonlocal called
+            called = True
+            await receive()
+
+        messages = iter([{"type": "http.request", "body": b"", "more_body": False}])
+
+        async def receive() -> dict[str, Any]:
+            return next(messages)
+
+        async def send(message: dict[str, Any]) -> None:
+            sent.append(message)
+
+        middleware = BoundedRequestBodyMiddleware(
+            downstream,
+            max_request_body_bytes=64,
+            max_multipart_body_bytes=128,
+            spool_directory=tmp_path,
+        )
+        await middleware(_http_scope([(b"content-length", content_length)]), receive, send)
+        return called, sent
+
+    oversized_called, oversized_sent = asyncio.run(exercise(b"9" * 5_000))
+    zero_called, zero_sent = asyncio.run(exercise(b"0" * 5_000))
+
+    assert not oversized_called
+    assert oversized_sent[0]["status"] == 413
+    assert zero_called
+    assert zero_sent == []
+
+
+def test_request_body_middleware_bounds_headerless_get_and_preserves_disconnect(
+    tmp_path: Path,
+) -> None:
+    called = False
+    sent: list[dict[str, Any]] = []
+
+    async def downstream(*_arguments: Any) -> None:
+        nonlocal called
+        called = True
+
+    oversized_messages = iter([{"type": "http.request", "body": b"x" * 65, "more_body": False}])
+
+    async def oversized_receive() -> dict[str, Any]:
+        return next(oversized_messages)
+
+    async def send(message: dict[str, Any]) -> None:
+        sent.append(message)
+
+    middleware = BoundedRequestBodyMiddleware(
+        downstream,
+        max_request_body_bytes=64,
+        max_multipart_body_bytes=128,
+        spool_directory=tmp_path,
+    )
+    asyncio.run(middleware(_http_scope(), oversized_receive, send))
+
+    assert not called
+    assert sent[0]["status"] == 413
+
+    received: list[dict[str, Any]] = []
+
+    async def streaming_downstream(_scope: dict[str, Any], receive: Any, _send: Any) -> None:
+        received.extend([await receive(), await receive()])
+
+    stream_messages = iter(
+        [
+            {"type": "http.request", "body": b"", "more_body": False},
+            {"type": "http.disconnect"},
+        ]
+    )
+
+    async def stream_receive() -> dict[str, Any]:
+        return next(stream_messages)
+
+    streaming_middleware = BoundedRequestBodyMiddleware(
+        streaming_downstream,
+        max_request_body_bytes=64,
+        max_multipart_body_bytes=128,
+        spool_directory=tmp_path,
+    )
+    asyncio.run(
+        streaming_middleware(_http_scope([(b"content-length", b"0")]), stream_receive, send)
+    )
+
+    assert [message["type"] for message in received] == ["http.request", "http.disconnect"]
+
+
+def test_multipart_media_type_and_security_checks_precede_body_spooling(tmp_path: Path) -> None:
+    config = WebConfig(data_root=tmp_path / "data", max_request_body_bytes=64)
+    app = create_app(config)
+    body = b"x" * 65
+    with TestClient(app) as client:
+        spoofed = client.post(
+            "/api/v1/workspaces",
+            content=body,
+            headers={"Content-Type": "multipart/form-dataevil", "Content-Length": "10"},
+        )
+        cross_origin = client.post(
+            "/api/v1/workspaces",
+            content=body,
+            headers={
+                "Content-Type": "application/json",
+                "Content-Length": "10",
+                "Origin": "https://attacker.example",
+            },
+        )
+        untrusted_host = client.post(
+            "/api/v1/workspaces",
+            content=body,
+            headers={
+                "Content-Type": "application/json",
+                "Content-Length": "10",
+                "Host": "attacker.example",
+            },
+        )
+
+    assert spoofed.status_code == 413
+    assert cross_origin.status_code == 403
+    assert untrusted_host.status_code == 400
+
+
 def test_recipe_schema_and_strict_validation(tmp_path: Path) -> None:
     app = create_app(data_root=tmp_path / "data")
     with TestClient(app) as client:
@@ -102,6 +372,252 @@ def test_recipe_schema_and_strict_validation(tmp_path: Path) -> None:
     assert valid.status_code == 200
     assert valid.json()["recipe_hash"] == _recipe().canonical_hash()
     assert invalid.status_code == 422
+
+
+def test_recipe_policy_accepts_exact_and_stricter_limits_without_mutation(tmp_path: Path) -> None:
+    config = WebConfig(data_root=tmp_path / "data", embedded_worker=False)
+    app = create_app(config)
+    at_ceiling = _recipe()
+    stricter = at_ceiling
+    for path, value in {
+        "settings.limits.max_input_bytes": 1_000_000,
+        "settings.limits.max_scene_nodes": 1_000,
+        "settings.limits.max_meshes": 100,
+        "settings.limits.max_vertices": 10_000,
+        "settings.limits.max_triangles": 10_000,
+        "settings.limits.max_texture_pixels": 1_000_000,
+        "settings.limits.max_runtime_seconds": 60,
+        "settings.limits.max_memory_bytes": 134_217_728,
+        "settings.inspection.deterministic_samples": 1_000,
+        "settings.collision.max_shapes": 8,
+        "settings.collision.max_hulls": 4,
+        "settings.collision.max_vertices_per_hull": 16,
+        "settings.shape_detection.min_support_samples": 256,
+        "settings.shape_detection.min_support_area_fraction": 0.01,
+        "settings.shape_detection.cylinder_min_axial_bins": 6,
+    }.items():
+        stricter = _set_recipe_value(stricter, path, value)
+
+    with TestClient(app) as client:
+        asset = client.post(
+            "/api/v1/assets/import",
+            files={"file": ("box.glb", _glb(), "model/gltf-binary")},
+        ).json()
+        ceiling_response = client.post(
+            "/api/v1/jobs",
+            json={"asset_id": asset["id"], "recipe": at_ceiling.canonical_dict()},
+        )
+        stricter_response = client.post(
+            "/api/v1/jobs",
+            json={"asset_id": asset["id"], "recipe": stricter.canonical_dict()},
+        )
+        validated = client.post("/api/v1/recipes/validate", json=stricter.canonical_dict())
+
+    assert ceiling_response.status_code == 201
+    assert stricter_response.status_code == 201
+    assert validated.status_code == 200
+    assert validated.json()["recipe_hash"] == stricter.canonical_hash()
+    assert validated.json()["recipe"] == stricter.canonical_dict()
+    stored_ceiling = app.state.store.get_job(ceiling_response.json()["id"])
+    stored_stricter = app.state.store.get_job(stricter_response.json()["id"])
+    assert stored_ceiling is not None
+    assert stored_ceiling["recipe_json"] == at_ceiling.canonical_json()
+    assert stored_ceiling["recipe_hash"] == at_ceiling.canonical_hash()
+    assert stored_stricter is not None
+    assert stored_stricter["recipe_json"] == stricter.canonical_json()
+    assert stored_stricter["recipe_hash"] == stricter.canonical_hash()
+
+
+_RECIPE_MAXIMUM_CASES = tuple(RecipeCeilings().maximums.items())
+_RECIPE_MINIMUM_CASES = tuple(RecipeCeilings().minimums.items())
+
+
+def test_recipe_policy_rejects_non_finite_configuration() -> None:
+    with pytest.raises(ValueError, match="recipe policy limits must be positive"):
+        RecipeCeilings(min_support_area_fraction=float("nan"))
+
+
+def test_create_app_worker_override_preserves_custom_service_policy(tmp_path: Path) -> None:
+    ceilings = RecipeCeilings(max_runtime_seconds=900)
+    config = WebConfig(
+        data_root=tmp_path / "data",
+        embedded_worker=False,
+        max_upload_bytes=2_000,
+        max_request_body_bytes=777,
+        multipart_overhead_bytes=333,
+        recipe_ceilings=ceilings,
+    )
+
+    app = create_app(config, embedded_worker=True)
+
+    effective = app.state.config
+    assert effective.embedded_worker is True
+    assert effective.max_upload_bytes == 2_000
+    assert effective.max_request_body_bytes == 777
+    assert effective.multipart_overhead_bytes == 333
+    assert effective.recipe_ceilings is ceilings
+
+
+def test_recipe_policy_reports_multiple_violations_in_path_order(tmp_path: Path) -> None:
+    ceilings = RecipeCeilings()
+    recipe = _set_recipe_value(
+        _set_recipe_value(
+            _recipe(),
+            "settings.limits.max_runtime_seconds",
+            ceilings.max_runtime_seconds + 1,
+        ),
+        "settings.limits.max_input_bytes",
+        ceilings.max_input_bytes + 1,
+    )
+    app = create_app(data_root=tmp_path / "data", embedded_worker=False)
+
+    with TestClient(app) as client:
+        response = client.post("/api/v1/recipes/validate", json=recipe.canonical_dict())
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == {
+        "code": "recipe_exceeds_server_policy",
+        "violations": [
+            {
+                "path": "settings.limits.max_input_bytes",
+                "requested": ceilings.max_input_bytes + 1,
+                "maximum": ceilings.max_input_bytes,
+            },
+            {
+                "path": "settings.limits.max_runtime_seconds",
+                "requested": ceilings.max_runtime_seconds + 1,
+                "maximum": ceilings.max_runtime_seconds,
+            },
+        ],
+    }
+
+
+def test_compact_browser_recipe_is_checked_against_service_policy(tmp_path: Path) -> None:
+    ceilings = RecipeCeilings(max_runtime_seconds=3_599)
+    app = create_app(
+        WebConfig(
+            data_root=tmp_path / "data",
+            embedded_worker=False,
+            recipe_ceilings=ceilings,
+        )
+    )
+    with TestClient(app) as client:
+        workspace = client.post("/api/v1/workspaces", json={"name": "Browser"}).json()
+        asset = client.post(
+            f"/api/v1/workspaces/{workspace['id']}/sources",
+            files={"file": ("box.glb", _glb(), "model/gltf-binary")},
+        ).json()
+        response = client.post(
+            f"/api/v1/workspaces/{workspace['id']}/sources/{asset['id']}/jobs",
+            json={"recipe": {"preset": "balanced"}},
+        )
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "detail": {
+            "code": "recipe_exceeds_server_policy",
+            "violations": [
+                {
+                    "path": "settings.limits.max_runtime_seconds",
+                    "requested": 3_600,
+                    "maximum": 3_599,
+                }
+            ],
+        }
+    }
+
+
+@pytest.mark.parametrize(("path", "maximum"), _RECIPE_MAXIMUM_CASES)
+def test_recipe_policy_rejects_each_resource_maximum(
+    tmp_path: Path, path: str, maximum: int
+) -> None:
+    app = create_app(data_root=tmp_path / "data", embedded_worker=False)
+    recipe = _set_recipe_value(_recipe(), path, maximum + 1)
+
+    with TestClient(app) as client:
+        response = client.post("/api/v1/recipes/validate", json=recipe.canonical_dict())
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "detail": {
+            "code": "recipe_exceeds_server_policy",
+            "violations": [{"path": path, "requested": maximum + 1, "maximum": maximum}],
+        }
+    }
+
+
+@pytest.mark.parametrize(("path", "minimum"), _RECIPE_MINIMUM_CASES)
+def test_recipe_policy_rejects_each_inverse_cost_minimum(
+    tmp_path: Path, path: str, minimum: int | float
+) -> None:
+    app = create_app(data_root=tmp_path / "data", embedded_worker=False)
+    requested = minimum - (0.001 if isinstance(minimum, float) else 1)
+    recipe = _set_recipe_value(_recipe(), path, requested)
+
+    with TestClient(app) as client:
+        response = client.post("/api/v1/recipes/validate", json=recipe.canonical_dict())
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "detail": {
+            "code": "recipe_exceeds_server_policy",
+            "violations": [{"path": path, "requested": requested, "minimum": minimum}],
+        }
+    }
+
+
+def test_recipe_policy_is_identical_for_global_workspace_retry_and_capabilities(
+    tmp_path: Path,
+) -> None:
+    config = WebConfig(data_root=tmp_path / "data", embedded_worker=False)
+    app = create_app(config)
+    path = "settings.limits.max_runtime_seconds"
+    invalid = _set_recipe_value(_recipe(), path, config.recipe_ceilings.max_runtime_seconds + 1)
+    with TestClient(app) as client:
+        workspace = client.post("/api/v1/workspaces", json={"name": "Policy"}).json()
+        asset = client.post(
+            f"/api/v1/workspaces/{workspace['id']}/sources",
+            files={"file": ("box.glb", _glb(), "model/gltf-binary")},
+        ).json()
+        global_response = client.post(
+            "/api/v1/jobs",
+            json={"asset_id": asset["id"], "recipe": invalid.canonical_dict()},
+        )
+        workspace_response = client.post(
+            f"/api/v1/workspaces/{workspace['id']}/sources/{asset['id']}/jobs",
+            json={"recipe": invalid.canonical_dict()},
+        )
+        stored = app.state.store.create_job(asset["id"], invalid, workspace_id=workspace["id"])
+        app.state.store.request_cancel(stored["id"])
+        retry_response = client.post(f"/api/v1/jobs/{stored['id']}/retry")
+        capabilities = client.get("/api/v1/capabilities")
+
+    expected = {
+        "detail": {
+            "code": "recipe_exceeds_server_policy",
+            "violations": [
+                {
+                    "path": path,
+                    "requested": config.recipe_ceilings.max_runtime_seconds + 1,
+                    "maximum": config.recipe_ceilings.max_runtime_seconds,
+                }
+            ],
+        }
+    }
+    assert global_response.status_code == 422
+    assert global_response.json() == expected
+    assert workspace_response.status_code == 422
+    assert workspace_response.json() == expected
+    assert retry_response.status_code == 422
+    assert retry_response.json() == expected
+    assert capabilities.status_code == 200
+    policy = capabilities.json()["service_policy"]
+    assert policy["recipe"] == config.recipe_ceilings.to_dict()
+    assert policy["request_body"] == {
+        "max_upload_bytes": config.max_upload_bytes,
+        "max_non_multipart_bytes": config.max_request_body_bytes,
+        "max_multipart_bytes": config.max_multipart_body_bytes,
+    }
 
 
 def test_job_api_worker_sse_resume_and_artifact_download(tmp_path: Path) -> None:

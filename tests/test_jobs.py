@@ -145,6 +145,35 @@ def test_worker_rejects_tampered_content_addressed_source(tmp_path: Path) -> Non
     assert store.list_artifacts(str(job["id"])) == []
 
 
+def test_worker_rejects_directly_queued_recipe_outside_service_policy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config, store, asset = _store_with_asset(tmp_path)
+    recipe_data = _recipe().model_dump(mode="python")
+    requested = config.recipe_ceilings.max_runtime_seconds + 1
+    recipe_data["settings"]["limits"]["max_runtime_seconds"] = requested
+    recipe = Recipe.model_validate(recipe_data)
+    job = store.create_job(str(asset["id"]), recipe)
+    popen = Mock()
+    monkeypatch.setattr("asset_cleanup.web.jobs.subprocess.Popen", popen)
+
+    assert WorkerService(config, store).run_until_idle() == 1
+
+    popen.assert_not_called()
+    failed = store.get_job(str(job["id"]))
+    assert failed is not None
+    assert failed["status"] == "failed"
+    assert failed["error_type"] == "RecipePolicyError"
+    assert failed["recipe_json"] == recipe.canonical_json()
+    assert failed["recipe_hash"] == recipe.canonical_hash()
+    assert failed["error_message"] == (
+        '{"code":"recipe_exceeds_server_policy","violations":'
+        f'[{{"maximum":{config.recipe_ceilings.max_runtime_seconds},'
+        '"path":"settings.limits.max_runtime_seconds",'
+        f'"requested":{requested}}}]}}'
+    )
+
+
 def test_worker_terminates_child_when_event_ingestion_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -14,6 +14,7 @@ import tempfile
 import zipfile
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Annotated, Any, Literal
 from urllib.parse import quote, urlsplit
@@ -44,7 +45,7 @@ from asset_cleanup.source import (
     validate_external_references,
 )
 from asset_cleanup.util import confined_path, sha256_file
-from asset_cleanup.web.config import WebConfig
+from asset_cleanup.web.config import RecipePolicyError, WebConfig
 from asset_cleanup.web.jobs import WorkerService, public_event, public_job
 from asset_cleanup.web.store import TERMINAL_STATUSES, Store
 
@@ -55,33 +56,49 @@ _WORKSPACE_ID = re.compile(r"^[0-9a-f]{32}$")
 _FORMAT_SUFFIX = {"glb": ".glb", "gltf": ".gltf", "obj": ".obj", "ply": ".ply", "stl": ".stl"}
 
 
-class BoundedMultipartMiddleware:
-    """Spool and bound complete multipart bodies before FastAPI parses them."""
+class BoundedRequestBodyMiddleware:
+    """Spool and bound complete request bodies before application parsing."""
 
-    def __init__(self, app: ASGIApp, *, max_body_bytes: int, spool_directory: Path) -> None:
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        max_request_body_bytes: int,
+        max_multipart_body_bytes: int,
+        spool_directory: Path,
+    ) -> None:
         self.app = app
-        self.max_body_bytes = max_body_bytes
+        self.max_request_body_bytes = max_request_body_bytes
+        self.max_multipart_body_bytes = max_multipart_body_bytes
         self.spool_directory = spool_directory
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        headers = {key.lower(): value for key, value in scope.get("headers", [])}
+        header_items = [(key.lower(), value) for key, value in scope.get("headers", [])]
+        headers = {key: value for key, value in header_items}
         content_type = headers.get(b"content-type", b"").lower()
-        if not content_type.startswith(b"multipart/form-data"):
-            await self.app(scope, receive, send)
+        multipart = content_type.split(b";", 1)[0].strip() == b"multipart/form-data"
+        max_body_bytes = self.max_multipart_body_bytes if multipart else self.max_request_body_bytes
+        content_lengths = [value for key, value in header_items if key == b"content-length"]
+        if len(content_lengths) > 1:
+            await JSONResponse(status_code=400, content={"detail": "invalid Content-Length"})(
+                scope, receive, send
+            )
             return
-        content_length = headers.get(b"content-length")
+        content_length = content_lengths[0] if content_lengths else None
         if content_length is not None:
-            try:
-                declared = int(content_length)
-            except ValueError:
+            if not content_length or not content_length.isdigit():
                 await JSONResponse(status_code=400, content={"detail": "invalid Content-Length"})(
                     scope, receive, send
                 )
                 return
-            if declared < 0 or declared > self.max_body_bytes:
+            normalized_length = content_length.lstrip(b"0") or b"0"
+            maximum_length = str(max_body_bytes).encode("ascii")
+            if len(normalized_length) > len(maximum_length) or (
+                len(normalized_length) == len(maximum_length) and normalized_length > maximum_length
+            ):
                 await JSONResponse(
                     status_code=413, content={"detail": "request exceeds configured limit"}
                 )(scope, receive, send)
@@ -104,7 +121,7 @@ class BoundedMultipartMiddleware:
                     continue
                 body = message.get("body", b"")
                 size += len(body)
-                if size > self.max_body_bytes:
+                if size > max_body_bytes:
                     await JSONResponse(
                         status_code=413, content={"detail": "request exceeds configured limit"}
                     )(scope, receive, send)
@@ -113,13 +130,19 @@ class BoundedMultipartMiddleware:
                 if not message.get("more_body", False):
                     break
             buffered.seek(0)
+            replay_complete = False
 
             async def replay() -> Message:
+                nonlocal replay_complete
+                if replay_complete:
+                    return await receive()
                 chunk = buffered.read(1024 * 1024)
+                more_body = bool(chunk) and buffered.tell() < size
+                replay_complete = not more_body
                 return {
                     "type": "http.request",
                     "body": chunk,
-                    "more_body": bool(chunk) and buffered.tell() < size,
+                    "more_body": more_body,
                 }
 
             await self.app(scope, replay, send)
@@ -172,6 +195,15 @@ class BrowserRecipe(StrictRequest):
 
 class WorkspaceJobRequest(StrictRequest):
     recipe: BrowserRecipe | Recipe
+
+
+def _enforce_recipe_policy(recipe: Recipe, config: WebConfig) -> None:
+    """Translate immutable service policy failures into the public API shape."""
+
+    try:
+        config.recipe_ceilings.enforce(recipe)
+    except RecipePolicyError as error:
+        raise HTTPException(status_code=422, detail=error.detail) from error
 
 
 def _clean_filename(value: str | None) -> str:
@@ -773,20 +805,7 @@ def create_app(
     if config is None:
         config = WebConfig(data_root=data_root or Path(".asset-cleanup"))
     if embedded_worker is not None:
-        config = WebConfig(
-            data_root=config.data_root,
-            max_upload_bytes=config.max_upload_bytes,
-            upload_chunk_bytes=config.upload_chunk_bytes,
-            embedded_worker=embedded_worker,
-            worker_poll_seconds=config.worker_poll_seconds,
-            event_poll_seconds=config.event_poll_seconds,
-            inspection_timeout_seconds=config.inspection_timeout_seconds,
-            inspection_memory_bytes=config.inspection_memory_bytes,
-            max_inspection_report_bytes=config.max_inspection_report_bytes,
-            max_evidence_json_bytes=config.max_evidence_json_bytes,
-            max_texture_pixels=config.max_texture_pixels,
-            allowed_hosts=config.allowed_hosts,
-        )
+        config = replace(config, embedded_worker=embedded_worker)
     config.initialize()
     store = Store(config.database_path)
     store.initialize()
@@ -815,12 +834,16 @@ def create_app(
     app.state.store = store
     app.state.worker = worker
     app.state.ready = False
-    app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(config.allowed_hosts))
     app.add_middleware(
-        BoundedMultipartMiddleware,
-        max_body_bytes=config.max_upload_bytes + 1024 * 1024,
+        BoundedRequestBodyMiddleware,
+        max_request_body_bytes=config.max_request_body_bytes,
+        max_multipart_body_bytes=config.max_multipart_body_bytes,
         spool_directory=config.temporary_root,
     )
+    # Trusted-host and same-origin checks stay outside body spooling so a
+    # rejected request is never buffered first. Starlette wraps middleware in
+    # reverse registration order; the decorator below becomes outermost.
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(config.allowed_hosts))
 
     @app.middleware("http")
     async def browser_boundary(request: Request, call_next: Any) -> Any:
@@ -874,7 +897,18 @@ def create_app(
 
     @app.get(f"{API_PREFIX}/capabilities")
     def capabilities() -> dict[str, Any]:
-        return {"version": __version__, "capabilities": capability_map()}
+        return {
+            "version": __version__,
+            "capabilities": capability_map(),
+            "service_policy": {
+                "recipe": config.recipe_ceilings.to_dict(),
+                "request_body": {
+                    "max_upload_bytes": config.max_upload_bytes,
+                    "max_non_multipart_bytes": config.max_request_body_bytes,
+                    "max_multipart_bytes": config.max_multipart_body_bytes,
+                },
+            },
+        }
 
     @app.get(f"{API_PREFIX}/workspaces")
     def list_workspaces() -> list[dict[str, Any]]:
@@ -906,7 +940,7 @@ def create_app(
         _require_workspace_id(workspace_id)
         if store.get_workspace(workspace_id) is None:
             raise HTTPException(status_code=404, detail="workspace not found")
-        if content_length is not None and content_length > config.max_upload_bytes + 1024 * 1024:
+        if content_length is not None and content_length > config.max_multipart_body_bytes:
             raise HTTPException(status_code=413, detail="request exceeds configured limit")
         asset = await _save_upload(file, config, store)
         if not store.attach_asset(workspace_id, str(asset["id"])):
@@ -944,6 +978,7 @@ def create_app(
             recipe = _recipe_from_web(body.recipe)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        _enforce_recipe_policy(recipe, config)
         editor_recipe_json = (
             body.recipe.model_dump_json() if isinstance(body.recipe, BrowserRecipe) else None
         )
@@ -988,7 +1023,7 @@ def create_app(
         file: Annotated[UploadFile, File(description="GLB, glTF, OBJ, PLY, or STL mesh")],
         content_length: Annotated[int | None, Header(ge=0)] = None,
     ) -> dict[str, Any]:
-        if content_length is not None and content_length > config.max_upload_bytes + 1024 * 1024:
+        if content_length is not None and content_length > config.max_multipart_body_bytes:
             raise HTTPException(status_code=413, detail="request exceeds configured limit")
         return _asset_response(await _save_upload(file, config, store))
 
@@ -1024,6 +1059,7 @@ def create_app(
 
     @app.post(f"{API_PREFIX}/recipes/validate")
     def validate_recipe(recipe: Recipe) -> dict[str, Any]:
+        _enforce_recipe_policy(recipe, config)
         return {
             "valid": True,
             "recipe_hash": recipe.canonical_hash(),
@@ -1034,6 +1070,7 @@ def create_app(
     def create_job(body: CreateJobRequest) -> dict[str, Any]:
         if store.get_asset(body.asset_id) is None:
             raise HTTPException(status_code=404, detail="asset not found")
+        _enforce_recipe_policy(body.recipe, config)
         job = store.create_job(body.asset_id, body.recipe)
         worker.notify()
         return _web_job(job, store, config)
@@ -1080,6 +1117,7 @@ def create_app(
         if previous["status"] not in {"failed", "cancelled"}:
             raise HTTPException(status_code=409, detail="only failed or cancelled jobs can retry")
         recipe = Recipe.from_json(str(previous["recipe_json"]))
+        _enforce_recipe_policy(recipe, config)
         workspace_id = previous.get("workspace_id")
         editor_recipe = _editor_recipe_for_job(previous)
         job = store.create_job(
