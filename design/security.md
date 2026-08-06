@@ -55,3 +55,4 @@ escape the service.
   Linux/macOS/Windows design.
 - Fuzz corpora and decompression-bomb fixtures are not yet assembled.
 - Remote multi-user authorization, quotas, and audit policy are deferred.
+

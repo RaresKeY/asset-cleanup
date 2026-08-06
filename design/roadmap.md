@@ -45,3 +45,4 @@ distance queries, region fitting, and mesh assembly; orchestration remains Pytho
   end-to-end candidate format stabilizes.
 - Benchmark assets, hardware matrix, and quality thresholds need owner approval.
 - Packaging beyond the OCI image and Python wheel remains unplanned.
+

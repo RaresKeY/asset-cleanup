@@ -64,3 +64,4 @@ intended physics body.
 - Primitive merge/split optimization needs benchmark-derived default weights.
 - Editable Blender helper generation is planned but not part of the first core
   release.
+

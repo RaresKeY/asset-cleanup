@@ -65,3 +65,4 @@ policy. Lowest face count or smallest file does not win automatically.
   implementations.
 - Render-proof automation needs a pinned renderer and deterministic scene.
 - Remote cache and distributed execution are intentionally deferred.
+
