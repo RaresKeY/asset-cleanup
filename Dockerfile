@@ -18,7 +18,8 @@ COPY --from=ghcr.io/astral-sh/uv:0.11.33 /uv /uvx /bin/
 WORKDIR /build
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
-    UV_NO_PROGRESS=1
+    UV_NO_PROGRESS=1 \
+    UV_PROJECT_ENVIRONMENT=/opt/venv
 
 COPY pyproject.toml uv.lock README.md ./
 RUN --mount=type=cache,target=/root/.cache/uv \
@@ -26,7 +27,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 COPY src/ ./src/
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv build --wheel --out-dir /tmp/wheels && \
-    uv pip install --python .venv/bin/python --no-deps /tmp/wheels/*.whl
+    uv pip install --python /opt/venv/bin/python --no-deps /tmp/wheels/*.whl
 
 FROM python:3.12-slim-bookworm AS runtime
 
@@ -42,7 +43,10 @@ RUN groupadd --gid "${APP_GID}" assetcleanup && \
     install --directory --owner="${APP_UID}" --group="${APP_GID}" --mode=0700 /data
 
 WORKDIR /app
-COPY --from=python-build --chown=${APP_UID}:${APP_GID} /build/.venv /opt/venv
+# Build the virtual environment at its final location. Python console-script
+# shebangs are absolute, so relocating a venv from /build would make
+# `asset-cleanup` fail at container startup with an unavailable interpreter.
+COPY --from=python-build --chown=${APP_UID}:${APP_GID} /opt/venv /opt/venv
 COPY --from=frontend-build --chown=${APP_UID}:${APP_GID} /build/web/dist /app/web
 
 USER ${APP_UID}:${APP_GID}
