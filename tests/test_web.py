@@ -961,7 +961,12 @@ def test_legacy_job_editor_recipe_is_derived_only_when_lossless(tmp_path: Path) 
         ).json()
         template = client.post(
             f"/api/v1/workspaces/{workspace['id']}/sources/{source['id']}/jobs",
-            json={"recipe": {"preset": "balanced"}},
+            json={
+                "recipe": {
+                    "preset": "balanced",
+                    "validation": {"gltf_validator": False},
+                }
+            },
         ).json()
         stored_template = app.state.store.get_job(template["id"])
         assert stored_template is not None
@@ -996,9 +1001,11 @@ def test_legacy_job_editor_recipe_is_derived_only_when_lossless(tmp_path: Path) 
     assert recovered.status_code == 200
     assert recovered.json()["editor_recipe"]["preset"] == "balanced"
     assert recovered.json()["editor_recipe"]["geometry"]["max_error"] == 0.0025
+    assert recovered.json()["editor_recipe"]["validation"]["gltf_validator"] is False
     assert "editor_recipe" not in unsupported.json()
     assert retried.status_code == 201
     assert retried.json()["editor_recipe"] == recovered.json()["editor_recipe"]
+    assert retried.json()["recipe_hash"] == recovered.json()["recipe_hash"]
     stored_retry = app.state.store.get_job(retried.json()["id"])
     assert stored_retry is not None and stored_retry["editor_recipe_json"] is not None
 
@@ -1077,6 +1084,7 @@ def test_job_view_omits_tampered_registered_evidence(tmp_path: Path) -> None:
     assert response.status_code == 200
     assert response.json()["metrics"] is None
     assert response.json()["validation"] is not None
+
 
 def test_browser_validator_default_and_explicit_disable_round_trip_exactly() -> None:
     enabled = BrowserRecipe.model_validate({"preset": "balanced"})

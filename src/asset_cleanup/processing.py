@@ -783,9 +783,21 @@ def run_pipeline(source: Path, recipe: Recipe, output: Path) -> RunResult:
                 appearance_gate = {"requested": False, "ran": False, "passed": True}
 
             validator_capability = plan["capabilities"]["gltf-validator"]
-            if validation_settings.gltf_validator and validator_capability["available"]:
-                executable = validator_capability.get("executable")
-                external_gate = run_gltf_validator(visual_path, str(executable))
+            executable = validator_capability.get("executable")
+            if (
+                validation_settings.gltf_validator
+                and validator_capability["available"]
+                and isinstance(executable, str)
+                and executable
+            ):
+                discovered_version = validator_capability.get("version")
+                external_gate = run_gltf_validator(
+                    visual_path,
+                    executable,
+                    discovered_version=(
+                        discovered_version if isinstance(discovered_version, str) else None
+                    ),
+                )
                 external_gate.update({"requested": True, "available": True})
             elif validation_settings.gltf_validator:
                 external_gate = {
@@ -794,6 +806,11 @@ def run_pipeline(source: Path, recipe: Recipe, output: Path) -> RunResult:
                     "ran": False,
                     "passed": False,
                     "reason": "Khronos glTF Validator executable is unavailable",
+                    "provider": {
+                        "name": "Khronos glTF Validator",
+                        "kind": "native-executable",
+                        "discovered_version": validator_capability.get("version"),
+                    },
                 }
             else:
                 external_gate = {
@@ -814,12 +831,27 @@ def run_pipeline(source: Path, recipe: Recipe, output: Path) -> RunResult:
             requested_gates = [
                 gate for gate in validation_data["gates"].values() if bool(gate.get("requested"))
             ]
-            warnings_passed = not validation_settings.fail_on_warning or not any(
+            internal_warning_count = sum(
                 issue.severity == "warning" for issue in validation_report.issues
+            )
+            external_warning_value = external_gate.get("warning_count")
+            external_warning_count = (
+                external_warning_value
+                if isinstance(external_warning_value, int)
+                and not isinstance(external_warning_value, bool)
+                and external_warning_value >= 0
+                else 0
+            )
+            warning_count = internal_warning_count + external_warning_count
+            warnings_passed = (
+                not validation_settings.fail_on_warning or warning_count == 0
             )
             validation_data["warnings_gate"] = {
                 "requested": validation_settings.fail_on_warning,
                 "passed": warnings_passed,
+                "warning_count": warning_count,
+                "internal_warning_count": internal_warning_count,
+                "external_gltf_warning_count": external_warning_count,
             }
             all_gates_passed = all(bool(gate.get("passed")) for gate in requested_gates)
             required_safety_enabled = (

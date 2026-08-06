@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 import trimesh
 
+import asset_cleanup.processing as processing
 from asset_cleanup.errors import ProcessingError, RecipeError
 from asset_cleanup.models import Recipe
 from asset_cleanup.processing import plan_run, run_pipeline
@@ -150,3 +151,58 @@ def test_collision_fit_must_pass_recipe_limits_before_acceptance(tmp_path: Path)
         )
     )
     assert sidecar["settings"]["acceptance_limits"]["surface_error_fraction"] == 0.000001
+
+
+def test_external_validator_warnings_obey_fail_on_warning(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data = _recipe().model_dump(mode="python")
+    data["settings"]["validation"].update(
+        {"gltf_validator": True, "fail_on_warning": True}
+    )
+    recipe = Recipe.model_validate(data)
+    capabilities = processing.capability_map()
+    capabilities["gltf-validator"] = {
+        "name": "gltf-validator",
+        "available": True,
+        "version": "2.0.0-dev.3.10",
+        "provider": "executable",
+        "executable": "/test/gltf_validator",
+        "note": None,
+    }
+    monkeypatch.setattr(processing, "capability_map", lambda: capabilities)
+
+    def validator_result(
+        path: Path,
+        executable: str,
+        *,
+        discovered_version: str | None = None,
+    ) -> dict[str, object]:
+        assert path.name == "source.glb"
+        assert executable == "/test/gltf_validator"
+        assert discovered_version == "2.0.0-dev.3.10"
+        return {
+            "ran": True,
+            "passed": True,
+            "warning_count": 1,
+        }
+
+    monkeypatch.setattr(processing, "run_gltf_validator", validator_result)
+
+    output = tmp_path / "candidate-with-warning"
+    result = processing.run_pipeline(_source(tmp_path), recipe, output)
+
+    assert result.status == "candidate"
+    validation = json.loads(
+        (output / "70_proof" / "validation.json").read_text(encoding="utf-8")
+    )
+    assert validation["gates"]["external_gltf_validator"]["passed"] is True
+    assert validation["warnings_gate"] == {
+        "requested": True,
+        "passed": False,
+        "warning_count": 1,
+        "internal_warning_count": 0,
+        "external_gltf_warning_count": 1,
+    }
+
