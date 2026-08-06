@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import json
+import os
+import signal
 import subprocess
+import tempfile
+import threading
+import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 import numpy as np
 
@@ -188,43 +193,338 @@ def compare_appearance_inventory(
     }
 
 
+GLTF_VALIDATOR_VERSION = "2.0.0-dev.3.10"
+GLTF_VALIDATOR_MAX_ISSUES = 1_000
+GLTF_VALIDATOR_MAX_REPORT_BYTES = 16 * 1024 * 1024
+GLTF_VALIDATOR_MAX_STDERR_BYTES = 64 * 1024
+
+
+def _stop_validator(process: subprocess.Popen[bytes]) -> None:
+    """Terminate the validator process group within a bounded interval."""
+
+    if process.poll() is not None:
+        return
+    try:
+        if os.name == "posix":
+            os.killpg(process.pid, signal.SIGTERM)
+        else:
+            process.terminate()
+        process.wait(timeout=3)
+        return
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    if process.poll() is None:
+        try:
+            if os.name == "posix":
+                os.killpg(process.pid, signal.SIGKILL)
+            else:
+                process.kill()
+        except OSError:
+            pass
+    try:
+        process.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        pass
+
+
+def _drain_validator_pipe(
+    stream: BinaryIO,
+    sink: bytearray,
+    total: list[int],
+    *,
+    limit: int,
+    keep_tail: bool,
+    overflow: threading.Event | None = None,
+) -> None:
+    """Drain one pipe without retaining more than its configured evidence bound."""
+
+    try:
+        while True:
+            chunk = stream.read(64 * 1024)
+            if not chunk:
+                break
+            total[0] += len(chunk)
+            if keep_tail:
+                sink.extend(chunk)
+                if len(sink) > limit:
+                    del sink[:-limit]
+                continue
+            remaining = max(0, limit - len(sink))
+            sink.extend(chunk[:remaining])
+            if len(chunk) > remaining and overflow is not None:
+                overflow.set()
+    except (OSError, ValueError):
+        return
+    finally:
+        try:
+            stream.close()
+        except (OSError, ValueError):
+            pass
+
+
+def _issue_count(report: dict[str, Any], name: str) -> int | None:
+    issues = report.get("issues")
+    value = issues.get(name) if isinstance(issues, dict) else None
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    return None
+
+
+def _invalid_json_constant(value: str) -> None:
+    raise ValueError(f"invalid JSON constant: {value}")
+
+
 def run_gltf_validator(
     path: Path,
     executable: str,
     *,
-    timeout_seconds: int = 120,
+    timeout_seconds: float = 120,
+    discovered_version: str | None = None,
+    max_report_bytes: int = GLTF_VALIDATOR_MAX_REPORT_BYTES,
+    max_stderr_bytes: int = GLTF_VALIDATOR_MAX_STDERR_BYTES,
 ) -> dict[str, Any]:
-    """Run Khronos glTF Validator with fixed argv and retain its JSON report."""
+    """Run the pinned native Khronos validator with bounded evidence."""
 
-    try:
-        completed = subprocess.run(
-            [
-                executable,
-                "--stdout",
-                "--no-write-timestamp",
-                "--no-absolute-path",
-                str(path),
-            ],
-            cwd=path.parent,
-            capture_output=True,
-            check=False,
-            text=True,
-            timeout=timeout_seconds,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        return {
-            "ran": False,
-            "passed": False,
-            "reason": f"validator execution failed: {type(exc).__name__}: {exc}",
-        }
-    try:
-        report: Any = json.loads(completed.stdout)
-    except json.JSONDecodeError:
-        report = None
-    return {
-        "ran": True,
-        "passed": completed.returncode == 0 and isinstance(report, dict),
-        "returncode": completed.returncode,
-        "report": report,
-        "stderr": completed.stderr[-8_192:],
+    if timeout_seconds <= 0:
+        raise ValueError("timeout_seconds must be positive")
+    if max_report_bytes <= 0:
+        raise ValueError("max_report_bytes must be positive")
+    if max_stderr_bytes <= 0:
+        raise ValueError("max_stderr_bytes must be positive")
+
+    path = path.expanduser().resolve()
+    started = time.monotonic()
+    provider: dict[str, Any] = {
+        "name": "Khronos glTF Validator",
+        "kind": "native-executable",
+        "executable": Path(executable).name,
+        "expected_version": GLTF_VALIDATOR_VERSION,
+        "discovered_version": discovered_version,
+        "version": None,
+        "version_match": False,
     }
+    limits = {
+        "timeout_seconds": timeout_seconds,
+        "max_issues": GLTF_VALIDATOR_MAX_ISSUES,
+        "max_report_bytes": max_report_bytes,
+        "max_stderr_bytes": max_stderr_bytes,
+    }
+    base_result: dict[str, Any] = {
+        "schema": "asset-cleanup/gltf-validator-v1alpha1",
+        "ran": False,
+        "passed": False,
+        "returncode": None,
+        "timed_out": False,
+        "report_overflow": False,
+        "drain_incomplete": False,
+        "report": None,
+        "report_bytes": 0,
+        "stderr": "",
+        "stderr_bytes": 0,
+        "stderr_truncated": False,
+        "issue_counts": None,
+        "warning_count": None,
+        "provider": provider,
+        "limits": limits,
+    }
+
+    with tempfile.TemporaryDirectory(prefix="asset-cleanup-validator-") as temporary:
+        config_path = Path(temporary) / "validator-config.yaml"
+        config_path.write_text(
+            f"max-issues: {GLTF_VALIDATOR_MAX_ISSUES}\n",
+            encoding="utf-8",
+        )
+        config_path.chmod(0o600)
+        environment = {
+            "PATH": os.environ.get("PATH", os.defpath),
+            "LANG": "C",
+            "LC_ALL": "C",
+            "TZ": "UTC",
+        }
+        if os.name == "nt":
+            for name in ("SYSTEMROOT", "WINDIR"):
+                if value := os.environ.get(name):
+                    environment[name] = value
+
+        try:
+            process = subprocess.Popen(
+                [
+                    executable,
+                    "--stdout",
+                    "--validate-resources",
+                    "--no-write-timestamp",
+                    "--no-absolute-path",
+                    "--no-messages",
+                    "--config",
+                    str(config_path),
+                    f"./{path.name}",
+                ],
+                cwd=path.parent,
+                env=environment,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                close_fds=True,
+                start_new_session=os.name == "posix",
+            )
+        except OSError as exc:
+            base_result.update(
+                {
+                    "reason": (
+                        f"validator execution failed: {type(exc).__name__}: {exc}"
+                    ),
+                    "elapsed_seconds": round(time.monotonic() - started, 6),
+                }
+            )
+            return base_result
+
+        assert process.stdout is not None
+        assert process.stderr is not None
+        stdout = bytearray()
+        stderr_tail = bytearray()
+        stdout_total = [0]
+        stderr_total = [0]
+        stdout_overflow = threading.Event()
+        stdout_thread = threading.Thread(
+            target=_drain_validator_pipe,
+            args=(process.stdout, stdout, stdout_total),
+            kwargs={
+                "limit": max_report_bytes,
+                "keep_tail": False,
+                "overflow": stdout_overflow,
+            },
+            name="gltf-validator-stdout",
+            daemon=True,
+        )
+        stderr_thread = threading.Thread(
+            target=_drain_validator_pipe,
+            args=(process.stderr, stderr_tail, stderr_total),
+            kwargs={"limit": max_stderr_bytes, "keep_tail": True},
+            name="gltf-validator-stderr",
+            daemon=True,
+        )
+        stdout_thread.start()
+        stderr_thread.start()
+
+        deadline = started + timeout_seconds
+        timed_out = False
+        report_overflow = False
+        while process.poll() is None:
+            if stdout_overflow.is_set():
+                report_overflow = True
+                _stop_validator(process)
+                break
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                timed_out = True
+                _stop_validator(process)
+                break
+            try:
+                process.wait(timeout=min(0.05, remaining))
+            except subprocess.TimeoutExpired:
+                pass
+
+        stdout_thread.join(timeout=3)
+        stderr_thread.join(timeout=3)
+        drain_incomplete = stdout_thread.is_alive() or stderr_thread.is_alive()
+        if drain_incomplete:
+            process.stdout.close()
+            process.stderr.close()
+            stdout_thread.join(timeout=1)
+            stderr_thread.join(timeout=1)
+        report_overflow = report_overflow or stdout_overflow.is_set()
+
+    report: dict[str, Any] | None = None
+    parse_reason: str | None = None
+    if not timed_out and not report_overflow and not drain_incomplete:
+        try:
+            parsed: Any = json.loads(
+                stdout.decode("utf-8"),
+                parse_constant=_invalid_json_constant,
+            )
+            if isinstance(parsed, dict):
+                report = parsed
+            else:
+                parse_reason = "validator report is not a JSON object"
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            parse_reason = "validator did not emit strict UTF-8 JSON"
+
+    names = ("numErrors", "numWarnings", "numInfos", "numHints")
+    counts = (
+        {name: _issue_count(report, name) for name in names}
+        if report is not None
+        else None
+    )
+    issue_counts = (
+        {
+            "errors": counts["numErrors"],
+            "warnings": counts["numWarnings"],
+            "infos": counts["numInfos"],
+            "hints": counts["numHints"],
+        }
+        if counts is not None and all(value is not None for value in counts.values())
+        else None
+    )
+    report_version_value = report.get("validatorVersion") if report is not None else None
+    report_version = (
+        report_version_value
+        if isinstance(report_version_value, str) and report_version_value.strip()
+        else None
+    )
+    version_match = report_version == GLTF_VALIDATOR_VERSION
+    provider.update({"version": report_version, "version_match": version_match})
+
+    error_count = issue_counts["errors"] if issue_counts is not None else None
+    warning_count = issue_counts["warnings"] if issue_counts is not None else None
+    returncode = process.returncode
+    passed = bool(
+        not timed_out
+        and not report_overflow
+        and not drain_incomplete
+        and parse_reason is None
+        and returncode == 0
+        and version_match
+        and error_count == 0
+    )
+    if timed_out:
+        reason = "validator exceeded its wall-time limit"
+    elif report_overflow:
+        reason = f"validator report exceeded its {max_report_bytes} byte limit"
+    elif drain_incomplete:
+        reason = "validator output streams did not close"
+    elif parse_reason is not None:
+        reason = parse_reason
+    elif report_version is None:
+        reason = "validator report did not identify its version"
+    elif not version_match:
+        reason = (
+            "validator version mismatch: "
+            f"expected {GLTF_VALIDATOR_VERSION}, received {report_version}"
+        )
+    elif issue_counts is None:
+        reason = "validator report has an invalid issue summary"
+    elif returncode != 0 or error_count:
+        reason = "validator reported glTF errors"
+    else:
+        reason = None
+
+    base_result.update(
+        {
+            "ran": True,
+            "passed": passed,
+            "reason": reason,
+            "returncode": returncode,
+            "timed_out": timed_out,
+            "report_overflow": report_overflow,
+            "drain_incomplete": drain_incomplete,
+            "report": report,
+            "report_bytes": stdout_total[0],
+            "stderr": stderr_tail.decode("utf-8", errors="replace"),
+            "stderr_bytes": stderr_total[0],
+            "stderr_truncated": stderr_total[0] > len(stderr_tail),
+            "issue_counts": issue_counts,
+            "warning_count": warning_count,
+            "elapsed_seconds": round(time.monotonic() - started, 6),
+        }
+    )
+    return base_result
