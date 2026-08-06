@@ -17,8 +17,11 @@ failed manifest if an exception occurs after intake begins.
 
 ## Status semantics
 
-`failed` means execution raised or structural validation failed. `candidate`
-means the run completed but a requested promotion gate is absent or not met.
+`failed` means execution raised and the pipeline aborted. A structural
+validation failure marks the validation stage as failed, but a run that
+finalizes normally has top-level `candidate` status because it is not
+promotable. `candidate` otherwise means the run completed but a requested
+promotion gate is absent or not met.
 `accepted` means structural safety, enabled geometry comparison, every enabled
 implemented gate, collision acceptance when generated, and warning policy passed.
 Asking for appearance comparison currently yields `candidate`: inventory runs,

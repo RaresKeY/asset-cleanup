@@ -252,12 +252,13 @@ def test_gltf_validator_timeout_kills_descendants(tmp_path: Path) -> None:
     result = run_gltf_validator(
         _asset(tmp_path),
         str(executable),
-        timeout_seconds=0.1,
+        timeout_seconds=0.5,
     )
     elapsed = time.monotonic() - started
     time.sleep(1.2)
 
     assert elapsed < 5
+    assert ready_marker.exists()
     assert result["ran"] is True
     assert result["passed"] is False
     assert result["timed_out"] is True
@@ -312,6 +313,7 @@ def test_gltf_validator_kills_pipe_holding_descendant_after_leader_exits(
     time.sleep(1.2)
 
     assert elapsed < 5
+    assert ready_marker.exists()
     assert result["ran"] is True
     assert result["passed"] is False
     assert result["drain_incomplete"] is True
