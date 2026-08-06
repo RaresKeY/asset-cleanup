@@ -41,14 +41,15 @@ def _executable(
     name: str,
     *,
     candidates: Iterable[str] | None = None,
-    version_args: Iterable[str] = ("--version",),
+    version_args: Iterable[str] | None = ("--version",),
+    note: str | None = None,
 ) -> Capability:
     executable = next(
         (found for candidate in (candidates or (name,)) if (found := shutil.which(candidate))),
         None,
     )
     version: str | None = None
-    if executable:
+    if executable and version_args is not None:
         try:
             completed = subprocess.run(
                 [executable, *version_args],
@@ -66,6 +67,7 @@ def _executable(
         version=version,
         provider="executable",
         executable=executable,
+        note=note,
     )
 
 
@@ -81,7 +83,12 @@ def detect_capabilities() -> list[Capability]:
         _package("fastapi", note="web extra"),
         _executable("gltfpack"),
         _executable("gltf-transform"),
-        _executable("gltf-validator", candidates=("gltf_validator", "gltf-validator")),
+        _executable(
+            "gltf-validator",
+            candidates=("gltf_validator", "gltf-validator"),
+            version_args=None,
+            note="version is verified from the JSON report during validation",
+        ),
         _executable("blender", version_args=("--version",)),
         _executable("godot", version_args=("--version",)),
     ]
