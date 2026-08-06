@@ -843,9 +843,7 @@ def run_pipeline(source: Path, recipe: Recipe, output: Path) -> RunResult:
                 else 0
             )
             warning_count = internal_warning_count + external_warning_count
-            warnings_passed = (
-                not validation_settings.fail_on_warning or warning_count == 0
-            )
+            warnings_passed = not validation_settings.fail_on_warning or warning_count == 0
             validation_data["warnings_gate"] = {
                 "requested": validation_settings.fail_on_warning,
                 "passed": warnings_passed,

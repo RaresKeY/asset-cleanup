@@ -30,7 +30,8 @@ uv run asset-cleanup run ./input.glb --output ./runs/chair-balanced --preset bal
 An enabled proof gate that cannot pass leaves a completed result as `candidate`:
 for example a host-native installation without the Khronos glTF Validator
 executable or requested rendered appearance proof. The CLI copies a local
-source bundle only when every glTF/OBJ reference is confined and present; the package retains those members and hashes.
+source bundle only when every glTF/OBJ reference is confined and present; the
+package retains those members and hashes.
 
 ```bash
 (cd web && npm ci && npm run build)

@@ -197,32 +197,62 @@ GLTF_VALIDATOR_VERSION = "2.0.0-dev.3.10"
 GLTF_VALIDATOR_MAX_ISSUES = 1_000
 GLTF_VALIDATOR_MAX_REPORT_BYTES = 16 * 1024 * 1024
 GLTF_VALIDATOR_MAX_STDERR_BYTES = 64 * 1024
+_GLTF_VALIDATOR_TERMINATE_GRACE_SECONDS = 1.0
+_GLTF_VALIDATOR_PIPE_JOIN_SECONDS = 0.25
+
+
+def _process_group_exists(process_group_id: int) -> bool:
+    try:
+        os.killpg(process_group_id, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 def _stop_validator(process: subprocess.Popen[bytes]) -> None:
-    """Terminate the validator process group within a bounded interval."""
+    """Terminate the validator and, on POSIX, every process in its group."""
 
-    if process.poll() is not None:
-        return
-    try:
-        if os.name == "posix":
+    if os.name == "posix":
+        try:
             os.killpg(process.pid, signal.SIGTERM)
-        else:
-            process.terminate()
-        process.wait(timeout=3)
+        except ProcessLookupError:
+            process.poll()
+            return
+        except OSError:
+            if process.poll() is None:
+                process.terminate()
+
+        deadline = time.monotonic() + _GLTF_VALIDATOR_TERMINATE_GRACE_SECONDS
+        while _process_group_exists(process.pid) and time.monotonic() < deadline:
+            process.poll()
+            time.sleep(0.02)
+        if _process_group_exists(process.pid):
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        try:
+            process.wait(timeout=_GLTF_VALIDATOR_TERMINATE_GRACE_SECONDS)
+        except subprocess.TimeoutExpired:
+            pass
         return
-    except (OSError, subprocess.TimeoutExpired):
-        pass
+
     if process.poll() is None:
         try:
-            if os.name == "posix":
-                os.killpg(process.pid, signal.SIGKILL)
-            else:
-                process.kill()
+            process.terminate()
+            process.wait(timeout=_GLTF_VALIDATOR_TERMINATE_GRACE_SECONDS)
+            return
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    if process.poll() is None:
+        try:
+            process.kill()
         except OSError:
             pass
     try:
-        process.wait(timeout=3)
+        process.wait(timeout=_GLTF_VALIDATOR_TERMINATE_GRACE_SECONDS)
     except subprocess.TimeoutExpired:
         pass
 
@@ -308,6 +338,7 @@ def run_gltf_validator(
         "max_issues": GLTF_VALIDATOR_MAX_ISSUES,
         "max_report_bytes": max_report_bytes,
         "max_stderr_bytes": max_stderr_bytes,
+        "termination_grace_seconds": _GLTF_VALIDATOR_TERMINATE_GRACE_SECONDS,
     }
     base_result: dict[str, Any] = {
         "schema": "asset-cleanup/gltf-validator-v1alpha1",
@@ -326,6 +357,17 @@ def run_gltf_validator(
         "warning_count": None,
         "provider": provider,
         "limits": limits,
+        "argv_contract": [
+            "<provider-executable>",
+            "--stdout",
+            "--validate-resources",
+            "--no-write-timestamp",
+            "--no-absolute-path",
+            "--no-messages",
+            "--config",
+            "<private-config>",
+            "<relative-candidate>",
+        ],
     }
 
     with tempfile.TemporaryDirectory(prefix="asset-cleanup-validator-") as temporary:
@@ -336,7 +378,7 @@ def run_gltf_validator(
         )
         config_path.chmod(0o600)
         environment = {
-            "PATH": os.environ.get("PATH", os.defpath),
+            "PATH": os.defpath,
             "LANG": "C",
             "LC_ALL": "C",
             "TZ": "UTC",
@@ -370,9 +412,7 @@ def run_gltf_validator(
         except OSError as exc:
             base_result.update(
                 {
-                    "reason": (
-                        f"validator execution failed: {type(exc).__name__}: {exc}"
-                    ),
+                    "reason": f"validator execution failed: {type(exc).__name__}: {exc}",
                     "elapsed_seconds": round(time.monotonic() - started, 6),
                 }
             )
@@ -426,14 +466,15 @@ def run_gltf_validator(
             except subprocess.TimeoutExpired:
                 pass
 
-        stdout_thread.join(timeout=3)
-        stderr_thread.join(timeout=3)
+        stdout_thread.join(timeout=_GLTF_VALIDATOR_PIPE_JOIN_SECONDS)
+        stderr_thread.join(timeout=_GLTF_VALIDATOR_PIPE_JOIN_SECONDS)
         drain_incomplete = stdout_thread.is_alive() or stderr_thread.is_alive()
         if drain_incomplete:
+            _stop_validator(process)
             stdout_stream.close()
             stderr_stream.close()
-            stdout_thread.join(timeout=1)
-            stderr_thread.join(timeout=1)
+            stdout_thread.join(timeout=_GLTF_VALIDATOR_TERMINATE_GRACE_SECONDS)
+            stderr_thread.join(timeout=_GLTF_VALIDATOR_TERMINATE_GRACE_SECONDS)
         report_overflow = report_overflow or stdout_overflow.is_set()
 
     report: dict[str, Any] | None = None
@@ -448,7 +489,7 @@ def run_gltf_validator(
                 report = parsed
             else:
                 parse_reason = "validator report is not a JSON object"
-        except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        except (UnicodeDecodeError, json.JSONDecodeError, RecursionError, ValueError):
             parse_reason = "validator did not emit strict UTF-8 JSON"
 
     names = ("numErrors", "numWarnings", "numInfos", "numHints")

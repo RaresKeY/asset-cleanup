@@ -24,7 +24,7 @@ rg --files design specs vendored | sort
 rg --files-without-match '^## Gaps$' design specs vendored
 ```
 
-The Python suite currently collects 142 tests and the frontend suite collects
+The Python suite currently collects 143 tests and the frontend suite collects
 20; these counts are informative rather than a compatibility contract. It
 covers core processing plus SQLite claims/recovery/cancellation/orphan
 termination, strict request-body limits, recipe-policy creation/retry/worker
