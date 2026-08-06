@@ -95,7 +95,8 @@ jobs:
       - name: Start hardened container and probe health
         run: |
           docker volume create asset-cleanup-ci-data
-          docker run --detach --rm --name asset-cleanup-ci \
+          docker run --rm asset-cleanup:ci asset-cleanup serve --help
+          docker run --detach --name asset-cleanup-ci \
             --read-only --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m \
             --cap-drop ALL --security-opt no-new-privileges:true \
             --pids-limit 128 --memory 2g \
