@@ -378,8 +378,10 @@ def run_gltf_validator(
             )
             return base_result
 
-        assert process.stdout is not None
-        assert process.stderr is not None
+        stdout_stream = process.stdout
+        stderr_stream = process.stderr
+        assert stdout_stream is not None
+        assert stderr_stream is not None
         stdout = bytearray()
         stderr_tail = bytearray()
         stdout_total = [0]
@@ -387,7 +389,7 @@ def run_gltf_validator(
         stdout_overflow = threading.Event()
         stdout_thread = threading.Thread(
             target=_drain_validator_pipe,
-            args=(process.stdout, stdout, stdout_total),
+            args=(stdout_stream, stdout, stdout_total),
             kwargs={
                 "limit": max_report_bytes,
                 "keep_tail": False,
@@ -398,7 +400,7 @@ def run_gltf_validator(
         )
         stderr_thread = threading.Thread(
             target=_drain_validator_pipe,
-            args=(process.stderr, stderr_tail, stderr_total),
+            args=(stderr_stream, stderr_tail, stderr_total),
             kwargs={"limit": max_stderr_bytes, "keep_tail": True},
             name="gltf-validator-stderr",
             daemon=True,
@@ -428,8 +430,8 @@ def run_gltf_validator(
         stderr_thread.join(timeout=3)
         drain_incomplete = stdout_thread.is_alive() or stderr_thread.is_alive()
         if drain_incomplete:
-            process.stdout.close()
-            process.stderr.close()
+            stdout_stream.close()
+            stderr_stream.close()
             stdout_thread.join(timeout=1)
             stderr_thread.join(timeout=1)
         report_overflow = report_overflow or stdout_overflow.is_set()
