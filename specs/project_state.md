@@ -22,9 +22,13 @@ and OCI container build. CLI and web workers use the same typed Recipe contract.
 - Structural validation, geometry distance, scene/appearance inventories,
   optional fixed-argument glTF Validator, collision acceptance, metrics, and
   staged manifests/artifacts/events/hashes.
-- Local workspaces, deduplicated sources, transactional job/event/artifact state,
-  child processing, cancellation/recovery, SSE, verified downloads/ZIPs, and GLB previews.
-- React/Three.js workspace UI, hardened Compose/container topology, and CI.
+- Local workspaces, deduplicated sources, workspace-owned persistent candidate
+  threads, transactional job/event/artifact state, child processing,
+  cancellation/recovery, SSE plus normalized JSON event history, verified
+  downloads/ZIPs, and GLB previews.
+- Fixed-height React/Three.js workspace UI with drag/drop intake, independently
+  scrolling rails, copyable job consoles, bounds-based preview framing, hardened
+  Compose/container topology, and CI.
 
 ## Deliberately not implemented
 

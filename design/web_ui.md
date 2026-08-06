@@ -41,6 +41,9 @@ the job is submitted.
   interrupted running jobs.
 - The static React/TypeScript application uses local Three.js and SSE; the OCI
   image contains no runtime CDN or Node build tooling.
+- The implemented shell is fixed-height with independently scrolling rails,
+  workspace-owned persistent candidate threads, drag/drop intake, bounded
+  copyable activity consoles, and bounds-based preview framing.
 - The container runs non-root, persists the data root, and has live/readiness
   endpoints; compose supports embedded or networkless split worker modes.
 

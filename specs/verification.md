@@ -18,10 +18,12 @@ rg --files design specs vendored | sort
 rg --files-without-match '^## Gaps$' design specs vendored
 ```
 
-The suite currently collects 82 tests; this count is informative rather than a
+The Python suite currently collects 87 tests and the frontend suite collects 19;
+these counts are informative rather than a
 compatibility contract. It covers core processing plus SQLite claims/recovery/
 cancellation/orphan termination, FastAPI upload/SSE/evidence integrity, CLI
-source-alias protection, and browser state behavior.
+source-alias protection, workspace job lineage/event history, browser state,
+and bounds-based camera framing.
 CI runs locked Python and frontend checks, builds distributions, builds the OCI
 image, and starts a hardened read-only container for health/UI smoke checks.
 An end-to-end smoke test should use a synthetic GLB and verify source copy,

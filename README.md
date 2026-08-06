@@ -41,13 +41,15 @@ Use `asset-cleanup --help` and `asset-cleanup recipe --help` for every option.
 The current command and recipe contracts are documented in
 [`specs/cli.md`](specs/cli.md) and [`specs/recipe_schema.md`](specs/recipe_schema.md).
 
-The browser accepts one self-contained source file at a time: GLB, data-URI
-glTF, or geometry-only OBJ/PLY/STL. A glTF/OBJ with sibling dependencies cannot
-be supplied in one upload and is rejected; use the CLI for such bundles. The UI
-persists workspaces/sources/jobs locally, shows inspection and live stage events,
-compares source/candidate/collision GLBs, and verifies artifact hashes before
-download or ZIP packaging. `docker compose up --build` publishes locally at
-`127.0.0.1:8080`; `compose.secure.yaml` adds a networkless split worker.
+The browser accepts one self-contained source file at a time by picker or
+drag/drop: GLB, data-URI glTF, or geometry-only OBJ/PLY/STL. A glTF/OBJ with
+sibling dependencies cannot be supplied in one upload and is rejected; use the
+CLI for such bundles. The fixed-height UI persists workspaces, sources, and
+candidate threads locally; restores selectable job history; shows a compact
+copyable activity console; frames uploaded and generated GLBs from their real
+bounds; and verifies artifact hashes before download or ZIP packaging. `docker
+compose up --build` publishes locally at `127.0.0.1:8080`;
+`compose.secure.yaml` adds a networkless split worker.
 
 ## What is supported now
 
@@ -60,7 +62,7 @@ download or ZIP packaging. `docker compose up --build` publishes locally at
 | Collision | Generates editable neutral box, sphere, cylinder, capsule, convex, CoACD, static-trimesh, or auto candidates, with body-type safety checks. |
 | Validation | Runs structural checks, approximate geometry distance, scene/appearance inventory, optional fixed-argument glTF Validator, warning, and collision gates. Rendered/silhouette proof is unavailable. |
 | Package | Writes immutable source/input/recipe/event/inspection/geometry/collision/proof/runtime artifacts, manifests, metrics, and SHA-256 index. |
-| Service/UI | SQLite-backed workspaces/jobs, isolated child processing, POSIX limits where available, SSE, retry/cancel/recovery, previews, verified downloads, and ZIPs. |
+| Service/UI | SQLite-backed workspace-owned candidate threads, isolated child processing, normalized SSE/JSON logs, retry/cancel/recovery, drag/drop, framed previews, verified downloads, and ZIPs. |
 | CLI | Inspect, plan, run, validate, capabilities, doctor, serve, worker, compare, package, and recipe subcommands. |
 
 ## Project memory

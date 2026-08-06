@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -15,6 +16,7 @@ from asset_cleanup.models import Recipe
 
 TERMINAL_STATUSES = frozenset({"succeeded", "failed", "cancelled"})
 JOB_STATUSES = frozenset({"queued", "running", *TERMINAL_STATUSES})
+SCHEMA_VERSION = 2
 
 
 def utc_now() -> str:
@@ -32,6 +34,7 @@ class Store:
         with self.connect() as database:
             database.executescript(
                 """
+                BEGIN IMMEDIATE;
                 CREATE TABLE IF NOT EXISTS assets (
                     id TEXT PRIMARY KEY,
                     sha256 TEXT NOT NULL UNIQUE,
@@ -60,7 +63,9 @@ class Store:
                     status TEXT NOT NULL CHECK(status IN
                         ('queued', 'running', 'succeeded', 'failed', 'cancelled')),
                     asset_id TEXT NOT NULL REFERENCES assets(id),
+                    workspace_id TEXT REFERENCES workspaces(id),
                     recipe_json TEXT NOT NULL,
+                    editor_recipe_json TEXT,
                     recipe_hash TEXT NOT NULL,
                     output_path TEXT NOT NULL UNIQUE,
                     retry_of TEXT REFERENCES jobs(id),
@@ -96,6 +101,63 @@ class Store:
                 );
                 """
             )
+            try:
+                current_version = int(database.execute("PRAGMA user_version").fetchone()[0])
+                if current_version > SCHEMA_VERSION:
+                    raise RuntimeError(
+                        f"state database schema {current_version} is newer than supported "
+                        f"schema {SCHEMA_VERSION}"
+                    )
+                columns = {
+                    str(row["name"])
+                    for row in database.execute("PRAGMA table_info(jobs)").fetchall()
+                }
+                if "workspace_id" not in columns:
+                    database.execute(
+                        "ALTER TABLE jobs ADD COLUMN workspace_id TEXT REFERENCES workspaces(id)"
+                    )
+                    database.execute(
+                        """UPDATE jobs SET workspace_id = (
+                            SELECT MIN(workspace_assets.workspace_id)
+                            FROM workspace_assets
+                            WHERE workspace_assets.asset_id = jobs.asset_id
+                        )
+                        WHERE workspace_id IS NULL AND 1 = (
+                            SELECT COUNT(*) FROM workspace_assets
+                            WHERE workspace_assets.asset_id = jobs.asset_id
+                        )"""
+                    )
+                if "editor_recipe_json" not in columns:
+                    database.execute("ALTER TABLE jobs ADD COLUMN editor_recipe_json TEXT")
+                database.execute(
+                    "CREATE INDEX IF NOT EXISTS jobs_workspace_created "
+                    "ON jobs(workspace_id, created_utc)"
+                )
+                database.execute(
+                    "CREATE INDEX IF NOT EXISTS jobs_asset_created ON jobs(asset_id, created_utc)"
+                )
+                database.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+                database.execute("COMMIT")
+            except BaseException:
+                database.execute("ROLLBACK")
+                raise
+            self._enable_wal(database)
+
+    @staticmethod
+    def _enable_wal(database: sqlite3.Connection) -> None:
+        """Set the persistent journal mode after migrations, tolerating cold-start peers."""
+
+        deadline = time.monotonic() + 30.0
+        while True:
+            try:
+                row = database.execute("PRAGMA journal_mode = WAL").fetchone()
+                if row is None or str(row[0]).lower() != "wal":
+                    raise RuntimeError("state database refused WAL journal mode")
+                return
+            except sqlite3.OperationalError as error:
+                if "locked" not in str(error).lower() or time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.05)
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
@@ -103,7 +165,6 @@ class Store:
         database.row_factory = sqlite3.Row
         database.execute("PRAGMA foreign_keys = ON")
         database.execute("PRAGMA busy_timeout = 30000")
-        database.execute("PRAGMA journal_mode = WAL")
         try:
             yield database
         finally:
@@ -221,6 +282,8 @@ class Store:
         asset_id: str,
         recipe: Recipe,
         *,
+        workspace_id: str | None = None,
+        editor_recipe_json: str | None = None,
         retry_of: str | None = None,
     ) -> dict[str, Any]:
         job_id = uuid4().hex
@@ -231,13 +294,15 @@ class Store:
             try:
                 database.execute(
                     """INSERT INTO jobs
-                    (id, status, asset_id, recipe_json, recipe_hash, output_path, retry_of,
-                     created_utc, updated_utc)
-                    VALUES (?, 'queued', ?, ?, ?, ?, ?, ?, ?)""",
+                    (id, status, asset_id, workspace_id, recipe_json, editor_recipe_json,
+                     recipe_hash, output_path, retry_of, created_utc, updated_utc)
+                    VALUES (?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         job_id,
                         asset_id,
+                        workspace_id,
                         recipe.canonical_json(),
+                        editor_recipe_json,
                         recipe.canonical_hash(),
                         output_path,
                         retry_of,
@@ -245,7 +310,18 @@ class Store:
                         now,
                     ),
                 )
-                self._append_event(database, job_id, "job.queued", "Job queued", {})
+                self._append_event(
+                    database,
+                    job_id,
+                    "job.queued",
+                    "Job queued",
+                    {
+                        "stage": "queue",
+                        "status": "queued",
+                        "stage_status": "queued",
+                        "progress": 0.0,
+                    },
+                )
                 database.execute("COMMIT")
             except BaseException:
                 database.execute("ROLLBACK")
@@ -260,13 +336,28 @@ class Store:
         return self._row(row)
 
     def list_jobs(
-        self, *, status: str | None = None, limit: int = 50, offset: int = 0
+        self,
+        *,
+        status: str | None = None,
+        workspace_id: str | None = None,
+        asset_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
     ) -> list[dict[str, Any]]:
         query = "SELECT * FROM jobs"
         arguments: list[Any] = []
+        clauses: list[str] = []
         if status is not None:
-            query += " WHERE status = ?"
+            clauses.append("status = ?")
             arguments.append(status)
+        if workspace_id is not None:
+            clauses.append("workspace_id = ?")
+            arguments.append(workspace_id)
+        if asset_id is not None:
+            clauses.append("asset_id = ?")
+            arguments.append(asset_id)
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
         query += " ORDER BY created_utc DESC, id DESC LIMIT ? OFFSET ?"
         arguments.extend((limit, offset))
         with self.connect() as database:
@@ -296,7 +387,18 @@ class Store:
                 if changed != 1:
                     database.execute("ROLLBACK")
                     return None
-                self._append_event(database, job_id, "job.started", "Job started", {})
+                self._append_event(
+                    database,
+                    job_id,
+                    "job.started",
+                    "Job started",
+                    {
+                        "stage": "intake",
+                        "status": "running",
+                        "stage_status": "started",
+                        "progress": 0.02,
+                    },
+                )
                 database.execute("COMMIT")
             except BaseException:
                 database.execute("ROLLBACK")
@@ -326,7 +428,13 @@ class Store:
                         job_id,
                         "job.failed",
                         "Worker interruption detected during startup recovery",
-                        {"error_type": "WorkerInterrupted"},
+                        {
+                            "error_type": "WorkerInterrupted",
+                            "stage": "worker",
+                            "status": "failed",
+                            "stage_status": "failed",
+                            "progress": 1.0,
+                        },
                     )
                 database.execute("COMMIT")
             except BaseException:
@@ -351,19 +459,43 @@ class Store:
                         (now, now, job_id),
                     )
                     self._append_event(
-                        database, job_id, "job.cancelled", "Queued job cancelled", {}
+                        database,
+                        job_id,
+                        "job.cancelled",
+                        "Queued job cancelled",
+                        {
+                            "stage": "queue",
+                            "status": "cancelled",
+                            "stage_status": "cancelled",
+                            "progress": 1.0,
+                        },
                     )
                 elif status == "running" and not bool(row["cancel_requested"]):
                     database.execute(
                         "UPDATE jobs SET cancel_requested = 1, updated_utc = ? WHERE id = ?",
                         (utc_now(), job_id),
                     )
+                    previous_event = database.execute(
+                        """SELECT data_json FROM events WHERE job_id = ?
+                        ORDER BY sequence DESC LIMIT 1""",
+                        (job_id,),
+                    ).fetchone()
+                    previous_data = (
+                        json.loads(str(previous_event["data_json"]))
+                        if previous_event is not None
+                        else {}
+                    )
                     self._append_event(
                         database,
                         job_id,
                         "job.cancel_requested",
                         "Cancellation requested",
-                        {},
+                        {
+                            "stage": previous_data.get("stage") or "worker",
+                            "status": "running",
+                            "stage_status": "stopping",
+                            "progress": previous_data.get("progress", 0.02),
+                        },
                     )
                 database.execute("COMMIT")
             except BaseException:
@@ -411,7 +543,17 @@ class Store:
                     "Job cancelled after current processing step" if cancelled else "Job succeeded"
                 )
                 self._append_event(
-                    database, job_id, kind, message, {"result_status": result_status}
+                    database,
+                    job_id,
+                    kind,
+                    message,
+                    {
+                        "result_status": result_status,
+                        "stage": "package",
+                        "status": status,
+                        "stage_status": status,
+                        "progress": 1.0,
+                    },
                 )
                 database.execute("COMMIT")
             except BaseException:
@@ -463,7 +605,13 @@ class Store:
                     job_id,
                     "job.cancelled" if cancelled else "job.failed",
                     "Job cancelled" if cancelled else str(error)[:1000],
-                    {"error_type": type(error).__name__},
+                    {
+                        "error_type": type(error).__name__,
+                        "stage": "worker",
+                        "status": status,
+                        "stage_status": status,
+                        "progress": 1.0,
+                    },
                 )
                 database.execute("COMMIT")
             except BaseException:
@@ -530,6 +678,26 @@ class Store:
                 "created_utc": row["created_utc"],
             }
             for row in rows
+        ]
+
+    def recent_events(self, job_id: str, *, limit: int = 500) -> list[dict[str, Any]]:
+        """Return the newest bounded event window in chronological order."""
+
+        with self.connect() as database:
+            rows = database.execute(
+                """SELECT sequence, kind, message, data_json, created_utc FROM events
+                WHERE job_id = ? ORDER BY sequence DESC LIMIT ?""",
+                (job_id, limit),
+            ).fetchall()
+        return [
+            {
+                "sequence": int(row["sequence"]),
+                "kind": row["kind"],
+                "message": row["message"],
+                "data": json.loads(row["data_json"]),
+                "created_utc": row["created_utc"],
+            }
+            for row in reversed(rows)
         ]
 
     def list_artifacts(self, job_id: str) -> list[dict[str, Any]]:
