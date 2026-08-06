@@ -28,6 +28,10 @@ belong in `vendored/`, lockfiles, and candidate manifests once implemented.
   sample-consensus primitive fitting.
 - Treat the 2026 convex primitive decomposition work as a future algorithmic
   direction; no public implementation was identified during this review.
+- Use the official native Khronos glTF Validator CLI rather than its npm package
+  in the OCI image. The adopted Linux amd64 pin is 2.0.0-dev.3.10 with an owned
+  SHA-256 check and retained LICENSE/NOTICES; it provides conformance evidence
+  but does not replace hostile-input policy or rendered proof.
 
 ## Initial normalized thresholds
 
@@ -92,4 +96,7 @@ presets. Benchmark results must tune them.
   measured tolerance contract.
 - Primitive reconstruction and collision fitting need a public benchmark report
   before defaults are promoted from design to specs.
+- The adopted validator release is a prerelease without a verified arm64
+  artifact or signed/reproducible release chain; re-evaluate the pin, advisories,
+  issues, and user reports before each update.
 

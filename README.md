@@ -28,8 +28,8 @@ uv run asset-cleanup run ./input.glb --output ./runs/chair-balanced --preset bal
 ```
 
 An enabled proof gate that cannot pass leaves a completed result as `candidate`:
-for example a missing Khronos glTF Validator executable or requested rendered
-appearance proof. The CLI copies a local source bundle only when every glTF/OBJ
+for example a host-native installation without the Khronos glTF Validator
+executable or requested rendered appearance proof. The CLI copies a local source bundle only when every glTF/OBJ
 reference is confined and present; the package retains those members and hashes.
 
 ```bash
@@ -49,7 +49,8 @@ candidate threads locally; restores selectable job history; shows a compact
 copyable activity console; frames uploaded and generated GLBs from their real
 bounds; and verifies artifact hashes before download or ZIP packaging. `docker
 compose up --build` publishes locally at `127.0.0.1:8080`;
-`compose.secure.yaml` adds a networkless split worker.
+`compose.secure.yaml` adds a networkless split worker. The image includes the
+checksum-pinned validator; host-native use discovers it from `PATH`.
 
 ## What is supported now
 
@@ -60,7 +61,7 @@ compose up --build` publishes locally at `127.0.0.1:8080`;
 | Inspection | Reports scene inventory, materials/attributes, topology, PCA, planar regions, and plane/box/sphere/cylinder/capsule evidence using deterministic sampling. |
 | Visual candidate | Copy-on-write degenerate removal, unreferenced-vertex removal, optional normal repair/merge/hole fill, and optional QEM simplification through `fast-simplification`. |
 | Collision | Generates editable neutral box, sphere, cylinder, capsule, convex, CoACD, static-trimesh, or auto candidates, with body-type safety checks. |
-| Validation | Runs structural checks, approximate geometry distance, scene/appearance inventory, optional fixed-argument glTF Validator, warning, and collision gates. Rendered/silhouette proof is unavailable. |
+| Validation | Runs structural checks, approximate geometry distance, scene/appearance inventory, bounded fixed-argument Khronos glTF Validator, warning, and collision gates. The official native CLI is bundled in the Linux amd64 OCI image; rendered/silhouette proof is unavailable. |
 | Package | Writes immutable source/input/recipe/event/inspection/geometry/collision/proof/runtime artifacts, manifests, metrics, and SHA-256 index. |
 | Service/UI | SQLite-backed workspace-owned candidate threads, isolated child processing, normalized SSE/JSON logs, retry/cancel/recovery, drag/drop, framed previews, verified downloads, and ZIPs. |
 | CLI | Inspect, plan, run, validate, capabilities, doctor, serve, worker, compare, package, and recipe subcommands. |
@@ -82,5 +83,7 @@ own code, documentation, or assets.
   separately designed authorization and worker boundary.
 - TRELLIS replay, planar/curved reconstruction, UV/bake, runtime optimization,
   engine proof, and rendered/silhouette appearance proof are not implemented.
+- The bundled native validator is currently Linux amd64 only. Linux arm64 needs
+  a verified source build or official artifact before that image is supported.
 - Use the current specs as the implementation boundary; design documents may
   describe intentionally unimplemented work.

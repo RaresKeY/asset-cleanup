@@ -59,15 +59,22 @@ Resolved versions below are from the current `uv.lock`. Package source is
 | [Node.js](https://github.com/nodejs/node) build image | 22 Bookworm Slim | MIT | Upstream project |
 | [Python](https://www.python.org/) build/runtime image | 3.12 Slim Bookworm | PSF-2.0 | Upstream project |
 | [uv](https://github.com/astral-sh/uv) build helper | 0.11.33 | MIT OR Apache-2.0 | Upstream repository |
+| [Khronos glTF Validator](https://github.com/KhronosGroup/glTF-Validator) native CLI | 2.0.0-dev.3.10, Linux amd64 | Apache-2.0; bundled upstream `NOTICES` contains Dart and transitive terms | [Official release](https://github.com/KhronosGroup/glTF-Validator/releases/tag/2.0.0-dev.3.10) |
 
 Transitive Python dependencies are resolved in `uv.lock`; frontend transitives
 are resolved in `web/package-lock.json`. Both accompany their own upstream
 distributions. A release SBOM/notice-generation process will replace this manual
 catalogue before a redistributable container or binary release.
 
+The OCI image retains the validator's complete upstream `LICENSE` at
+`/usr/share/licenses/gltf-validator/LICENSE` and `NOTICES` at
+`/usr/share/doc/gltf-validator/NOTICES`. The archive itself is not committed
+to this repository.
+
 ## Gaps
 
 - Copyright notices and complete transitive dependency attribution need automated
   SBOM generation before distributing a bundled application image or wheel.
-- Planned executable adapters are not included here until they are actually
-  downloaded, invoked, or redistributed by this repository.
+- Automated notice/SBOM generation, signed-artifact verification,
+  upstream-advisory monitoring, and Linux arm64 validator redistribution remain
+  unresolved.

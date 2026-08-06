@@ -11,7 +11,7 @@ failed manifest if an exception occurs after intake begins.
 | Inspect | Runs bounded source inspection when enabled. | `10_inspect/inspection.json` |
 | Geometry | Copy-on-write repair and optional simplification per local mesh, then GLB export. A repair-only run still enters this stage. | `20_geometry/visual_candidate.glb`, `geometry_report.json` |
 | Collision | Builds a derived world-space collision mesh and writes neutral sidecar/GLB if enabled and not `none`. | `50_collision/asset.collision.{json,glb}` |
-| Validation | Runs structural, geometry-distance, scene/appearance inventory, optional glTF-validator, warning, and collision gates. | `70_proof/validation.json`, `metrics.json` |
+| Validation | Runs structural, geometry-distance, scene/appearance inventory, bounded Khronos glTF-validator, warning, and collision gates. | `70_proof/validation.json`, `metrics.json` |
 | Package | Copies visual GLB and sidecar into a generic runtime directory. | `60_runtime/` |
 | Finalize | Registers the event log, writes artifact index and final manifest/status. | `artifact_manifest.json`, `manifest.json`, `events.jsonl` |
 
@@ -26,8 +26,11 @@ but deterministic rendered/silhouette proof is unavailable.
 
 `plan_run` reports source classification, expanded recipe hash, enabled stages,
 capabilities, warnings, blockers, and `runnable`. Missing
-`fast-simplification` blocks non-preserve geometry; missing CoACD blocks only an
-explicit CoACD collision recipe. A missing glTF validator is a warning.
+`fast-simplification` blocks non-preserve geometry; missing CoACD blocks only
+an explicit CoACD collision recipe. The official Linux amd64 OCI image supplies
+the pinned glTF validator. Host-native and unsupported-platform installs may
+still lack it; planning reports a warning and an enabled gate remains
+`candidate` rather than silently passing.
 
 ## Gaps
 
@@ -35,5 +38,6 @@ explicit CoACD collision recipe. A missing glTF validator is a warning.
   dependency invalidation, and distributed execution are not implemented.
 - Shape detection is configured but not an independently recorded stage toggle;
   it runs as part of inspection.
-- The glTF Validator runs only when its executable is available; rendered
+- Host-native installs run the glTF Validator only when its executable is
+  available; the current bundled provider is Linux amd64 only. Rendered
   appearance/silhouette proof remains unavailable.
