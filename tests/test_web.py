@@ -13,7 +13,13 @@ from fastapi.testclient import TestClient
 
 from asset_cleanup.models import Recipe
 from asset_cleanup.web import WebConfig, create_app
-from asset_cleanup.web.api import BoundedRequestBodyMiddleware
+from asset_cleanup.web.api import (
+    BoundedRequestBodyMiddleware,
+    BrowserRecipe,
+    _browser_recipe_from_canonical,
+    _editor_recipe_for_job,
+    _recipe_from_web,
+)
 from asset_cleanup.web.config import RecipeCeilings
 
 
@@ -828,6 +834,7 @@ def test_browser_workspace_contract_runs_and_packages_candidate(tmp_path: Path) 
         },
         "validation": {
             "compare_geometry": True,
+            "gltf_validator": False,
             "compare_scene_inventory": True,
             "compare_appearance": False,
         },
@@ -1070,3 +1077,43 @@ def test_job_view_omits_tampered_registered_evidence(tmp_path: Path) -> None:
     assert response.status_code == 200
     assert response.json()["metrics"] is None
     assert response.json()["validation"] is not None
+
+def test_browser_validator_default_and_explicit_disable_round_trip_exactly() -> None:
+    enabled = BrowserRecipe.model_validate({"preset": "balanced"})
+    disabled = BrowserRecipe.model_validate(
+        {"preset": "balanced", "validation": {"gltf_validator": False}}
+    )
+
+    assert enabled.validation.gltf_validator is True
+    assert disabled.validation.gltf_validator is False
+
+    for editor in (enabled, disabled):
+        canonical = _recipe_from_web(editor)
+        recovered = _browser_recipe_from_canonical(canonical)
+
+        assert recovered is not None
+        assert recovered.model_dump(mode="json") == editor.model_dump(mode="json")
+        assert _recipe_from_web(recovered).canonical_json() == canonical.canonical_json()
+
+
+def test_legacy_editor_json_without_validator_field_recovers_canonical_false() -> None:
+    editor = BrowserRecipe.model_validate(
+        {"preset": "balanced", "validation": {"gltf_validator": False}}
+    )
+    canonical = _recipe_from_web(editor)
+    canonical_json = canonical.canonical_json()
+    legacy_editor = editor.model_dump(mode="json")
+    del legacy_editor["validation"]["gltf_validator"]
+
+    recovered = _editor_recipe_for_job(
+        {
+            "recipe_json": canonical_json,
+            "editor_recipe_json": json.dumps(legacy_editor),
+        }
+    )
+
+    assert recovered is not None
+    assert recovered.validation.gltf_validator is False
+    assert _recipe_from_web(recovered).canonical_json() == canonical_json
+    assert canonical.canonical_hash() == Recipe.from_json(canonical_json).canonical_hash()
+

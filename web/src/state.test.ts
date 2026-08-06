@@ -36,6 +36,19 @@ describe("job state helpers", () => {
     expect(collision.preset).toBe("collision");
   });
 
+  it("keeps native validation explicit through defaults and preset expansion", () => {
+    expect(defaultRecipe.validation.gltf_validator).toBe(true);
+
+    const disabled = {
+      ...defaultRecipe,
+      preset: "custom" as const,
+      validation: { ...defaultRecipe.validation, gltf_validator: false },
+    };
+
+    expect(recipeForPreset("custom", disabled).validation.gltf_validator).toBe(false);
+    expect(recipeForPreset("balanced", disabled).validation.gltf_validator).toBe(true);
+  });
+
   it("keeps restored jobs newest-first while replacing refreshed records", () => {
     const older = { id: "older", state: "queued", created_utc: "2026-01-01T00:00:00Z" } as Job;
     const newer = { id: "newer", state: "running", created_utc: "2026-01-02T00:00:00Z" } as Job;

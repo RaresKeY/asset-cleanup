@@ -107,6 +107,7 @@ export interface Recipe {
   };
   validation: {
     compare_geometry: boolean;
+    gltf_validator: boolean;
     compare_scene_inventory: boolean;
     compare_appearance: boolean;
   };
@@ -124,5 +125,10 @@ export const defaultRecipe: Recipe = {
     reconstruct_primitives: false,
   },
   collision: { enabled: true, mode: "auto", fit: "balanced", body: "static" },
-  validation: { compare_geometry: true, compare_scene_inventory: true, compare_appearance: false },
+  validation: {
+    compare_geometry: true,
+    gltf_validator: true,
+    compare_scene_inventory: true,
+    compare_appearance: false,
+  },
 };
