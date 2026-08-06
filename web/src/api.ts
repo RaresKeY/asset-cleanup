@@ -1,4 +1,4 @@
-import type { AssetSource, Inspection, Job, Recipe, RunEvent, Workspace } from "./types";
+import type { AssetSource, Inspection, Job, Page, Recipe, RunEvent, Workspace } from "./types";
 
 const base = "/api/v1";
 
@@ -27,6 +27,8 @@ export const api = {
   listWorkspaces: () => request<Workspace[]>("/workspaces"),
   createWorkspace: (name: string) => request<Workspace>("/workspaces", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) }),
   listSources: (workspaceId: string) => request<AssetSource[]>(`/workspaces/${workspaceId}/sources`),
+  listWorkspaceJobs: (workspaceId: string, limit = 200, offset = 0) =>
+    request<Page<Job>>(`/workspaces/${workspaceId}/jobs?limit=${limit}&offset=${offset}`),
   uploadSource: (workspaceId: string, file: File) => {
     const body = new FormData();
     body.append("file", file);
@@ -35,8 +37,13 @@ export const api = {
   inspectSource: (workspaceId: string, sourceId: string) => request<Inspection>(`/workspaces/${workspaceId}/sources/${sourceId}/inspection`),
   createJob: (workspaceId: string, sourceId: string, recipe: Recipe) => request<Job>(`/workspaces/${workspaceId}/sources/${sourceId}/jobs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ recipe }) }),
   getJob: (jobId: string) => request<Job>(`/jobs/${jobId}`),
+  listJobEvents: (jobId: string, after = 0, limit = 500) =>
+    request<{ items: RunEvent[] }>(
+      `/jobs/${jobId}/events.json?after=${after}&limit=${limit}&tail=${after === 0}`,
+    ),
   cancelJob: (jobId: string) => request<Job>(`/jobs/${jobId}/cancel`, { method: "POST" }),
   retryJob: (jobId: string) => request<Job>(`/jobs/${jobId}/retry`, { method: "POST" }),
+  sourcePreviewUrl: (sourceId: string) => `${base}/assets/${sourceId}/preview`,
   eventUrl: (jobId: string) => `${base}/jobs/${jobId}/events`,
   artifactUrl: (jobId: string, name: string) => `${base}/jobs/${jobId}/artifacts/${encodeURIComponent(name)}`,
 };

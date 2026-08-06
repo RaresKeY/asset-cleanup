@@ -45,7 +45,7 @@ from asset_cleanup.source import (
 )
 from asset_cleanup.util import confined_path, sha256_file
 from asset_cleanup.web.config import WebConfig
-from asset_cleanup.web.jobs import WorkerService, public_job
+from asset_cleanup.web.jobs import WorkerService, public_event, public_job
 from asset_cleanup.web.store import TERMINAL_STATUSES, Store
 
 API_PREFIX = "/api/v1"
@@ -335,6 +335,109 @@ def _recipe_from_web(value: BrowserRecipe | Recipe | dict[str, Any]) -> Recipe:
     return Recipe.model_validate(data)
 
 
+def _browser_recipe_from_canonical(recipe: Recipe) -> BrowserRecipe | None:
+    """Recover the editor subset only when it reproduces the canonical recipe exactly."""
+
+    geometry = recipe.settings.geometry
+    if geometry.reconstruct_planes or geometry.reconstruct_curved_primitives:
+        return None
+    geometry_enabled = bool(recipe.stages.geometry)
+    geometry_mode = geometry.simplify_mode.value
+    if not geometry_enabled:
+        strategy = "error"
+    elif geometry_mode == "target" and geometry.target_faces is not None:
+        strategy = "target"
+    elif geometry_mode == "error" and geometry.max_error_fraction is not None:
+        strategy = "error"
+    else:
+        return None
+
+    collision = recipe.settings.collision
+    collision_enabled = bool(recipe.stages.collision)
+    collision_modes = {
+        "auto",
+        "box",
+        "sphere",
+        "cylinder",
+        "capsule",
+        "convex-hull",
+        "compound",
+    }
+    collision_bodies = {"static", "dynamic", "area"}
+    if collision_enabled and (
+        collision.mode.value not in collision_modes
+        or collision.body_type.value not in collision_bodies
+    ):
+        return None
+
+    preset = recipe.expanded_preset or "custom"
+    default_error = {
+        "close": 0.001,
+        "balanced": 0.0025,
+        "distant": 0.01,
+        "collision": 0.01,
+        "custom": 0.0025,
+    }[preset]
+    try:
+        editor = BrowserRecipe.model_validate(
+            {
+                "preset": preset,
+                "geometry": {
+                    "enabled": geometry_enabled,
+                    "strategy": strategy,
+                    "target_faces": geometry.target_faces or 5_000,
+                    "max_error": (
+                        geometry.max_error_fraction
+                        if geometry.max_error_fraction is not None
+                        else default_error
+                    ),
+                    "preserve_boundaries": geometry.preserve_boundaries,
+                    "reconstruct_planar": False,
+                    "reconstruct_primitives": False,
+                },
+                "collision": {
+                    "enabled": collision_enabled,
+                    "mode": collision.mode.value if collision_enabled else "auto",
+                    "fit": collision.fit_policy.value,
+                    "body": collision.body_type.value if collision_enabled else "static",
+                },
+                "validation": {
+                    "compare_geometry": recipe.settings.validation.compare_geometry,
+                    "compare_scene_inventory": recipe.settings.validation.compare_scene_inventory,
+                    "compare_appearance": recipe.settings.validation.compare_appearance,
+                },
+            }
+        )
+        expanded = _recipe_from_web(editor)
+    except ValueError:
+        return None
+    if expanded.canonical_json() != recipe.canonical_json():
+        return None
+    return editor
+
+
+def _editor_recipe_for_job(job: dict[str, Any]) -> BrowserRecipe | None:
+    """Validate stored editor state or losslessly derive it for a legacy job."""
+
+    recipe_json = job.get("recipe_json")
+    if not isinstance(recipe_json, str):
+        return None
+    try:
+        recipe = Recipe.from_json(recipe_json)
+    except ValueError:
+        return None
+
+    editor_recipe_json = job.get("editor_recipe_json")
+    if isinstance(editor_recipe_json, str):
+        try:
+            stored = BrowserRecipe.model_validate_json(editor_recipe_json)
+            if _recipe_from_web(stored).canonical_json() == recipe.canonical_json():
+                return stored
+        except ValueError:
+            pass
+    return _browser_recipe_from_canonical(recipe)
+
+
 async def _save_upload(file: UploadFile, config: WebConfig, store: Store) -> dict[str, Any]:
     temporary = config.temporary_root / f"upload-{uuid4().hex}.part"
     digest = hashlib.sha256()
@@ -561,23 +664,28 @@ def _web_job(job: dict[str, Any], store: Store, config: WebConfig) -> dict[str, 
         if status_value == "succeeded"
         else status_value
     )
-    recent_events = store.events(str(job["id"]), after=0, limit=500)
+    recent_events = [
+        public_event(event) for event in store.recent_events(str(job["id"]), limit=500)
+    ]
     latest = recent_events[-1] if recent_events else None
-    stage = (latest or {}).get("data", {}).get("stage")
-    stage_progress = {
-        "intake": 0.10,
-        "inspect": 0.25,
-        "geometry": 0.50,
-        "collision": 0.70,
-        "validation": 0.85,
-        "package": 0.95,
-    }
+    stage = next(
+        (event["stage"] for event in reversed(recent_events) if event.get("stage") is not None),
+        None,
+    )
     progress = (
         1.0
         if status_value in TERMINAL_STATUSES
-        else stage_progress.get(str(stage), 0.08 if status_value == "running" else 0.02)
+        else float(latest["progress"])
+        if latest is not None
+        else 0.08
+        if status_value == "running"
+        else 0.02
     )
     result = public_job(job)
+    result.pop("editor_recipe", None)
+    editor_recipe = _editor_recipe_for_job(job)
+    if editor_recipe is not None:
+        result["editor_recipe"] = editor_recipe.model_dump(mode="json")
     result.update(
         {
             "state": state,
@@ -590,6 +698,7 @@ def _web_job(job: dict[str, Any], store: Store, config: WebConfig) -> dict[str, 
                 else None
             ),
             "stage": stage,
+            "event_sequence": int(latest["sequence"]) if latest is not None else 0,
             "source_id": job["asset_id"],
             "source_preview_url": f"{API_PREFIX}/assets/{job['asset_id']}/preview",
             "candidate_preview_url": (
@@ -835,11 +944,43 @@ def create_app(
             recipe = _recipe_from_web(body.recipe)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        job = store.create_job(asset_id, recipe)
+        editor_recipe_json = (
+            body.recipe.model_dump_json() if isinstance(body.recipe, BrowserRecipe) else None
+        )
+        job = store.create_job(
+            asset_id,
+            recipe,
+            workspace_id=workspace_id,
+            editor_recipe_json=editor_recipe_json,
+        )
         worker.notify()
-        result = _web_job(job, store, config)
-        result["workspace_id"] = workspace_id
-        return result
+        return _web_job(job, store, config)
+
+    @app.get(f"{API_PREFIX}/workspaces/{{workspace_id}}/jobs")
+    def list_workspace_jobs(
+        workspace_id: str,
+        source_id: Annotated[str | None, Query()] = None,
+        limit: Annotated[int, Query(ge=1, le=200)] = 50,
+        offset: Annotated[int, Query(ge=0)] = 0,
+    ) -> dict[str, Any]:
+        _require_workspace_id(workspace_id)
+        if store.get_workspace(workspace_id) is None:
+            raise HTTPException(status_code=404, detail="workspace not found")
+        if source_id is not None:
+            _require_asset_id(source_id)
+            if not store.workspace_has_asset(workspace_id, source_id):
+                raise HTTPException(status_code=404, detail="source not found in workspace")
+        jobs = store.list_jobs(
+            workspace_id=workspace_id,
+            asset_id=source_id,
+            limit=limit,
+            offset=offset,
+        )
+        return {
+            "items": [_web_job(job, store, config) for job in jobs],
+            "limit": limit,
+            "offset": offset,
+        }
 
     @app.post(f"{API_PREFIX}/assets/import", status_code=status.HTTP_201_CREATED)
     @app.post(f"{API_PREFIX}/assets", status_code=status.HTTP_201_CREATED, include_in_schema=False)
@@ -939,9 +1080,38 @@ def create_app(
         if previous["status"] not in {"failed", "cancelled"}:
             raise HTTPException(status_code=409, detail="only failed or cancelled jobs can retry")
         recipe = Recipe.from_json(str(previous["recipe_json"]))
-        job = store.create_job(str(previous["asset_id"]), recipe, retry_of=job_id)
+        workspace_id = previous.get("workspace_id")
+        editor_recipe = _editor_recipe_for_job(previous)
+        job = store.create_job(
+            str(previous["asset_id"]),
+            recipe,
+            workspace_id=str(workspace_id) if workspace_id is not None else None,
+            editor_recipe_json=(
+                editor_recipe.model_dump_json() if editor_recipe is not None else None
+            ),
+            retry_of=job_id,
+        )
         worker.notify()
         return _web_job(job, store, config)
+
+    @app.get(f"{API_PREFIX}/jobs/{{job_id}}/events.json")
+    def job_event_log(
+        job_id: str,
+        after: Annotated[int, Query(ge=0)] = 0,
+        limit: Annotated[int, Query(ge=1, le=500)] = 500,
+        tail: bool = False,
+    ) -> dict[str, list[dict[str, Any]]]:
+        _require_job_id(job_id)
+        if store.get_job(job_id) is None:
+            raise HTTPException(status_code=404, detail="job not found")
+        if tail and after:
+            raise HTTPException(status_code=400, detail="tail cannot be combined with after")
+        events = (
+            store.recent_events(job_id, limit=limit)
+            if tail
+            else store.events(job_id, after=after, limit=limit)
+        )
+        return {"items": [public_event(event) for event in events]}
 
     @app.get(f"{API_PREFIX}/jobs/{{job_id}}/events")
     async def job_events(
@@ -967,36 +1137,23 @@ def create_app(
             nonlocal cursor
             idle_cycles = 0
             while True:
-                events = store.events(job_id, after=cursor)
+                events = store.events(job_id, after=cursor, limit=500)
                 for event in events:
                     cursor = int(event["sequence"])
-                    data = event.get("data", {})
-                    kind = str(event["kind"])
                     payload = json.dumps(
-                        {
-                            "sequence": cursor,
-                            "created_utc": event["created_utc"],
-                            "level": data.get(
-                                "level",
-                                "error"
-                                if kind.endswith("failed")
-                                else "warning"
-                                if "cancel" in kind
-                                else "info",
-                            ),
-                            "type": kind,
-                            "stage": data.get("stage"),
-                            "message": event["message"],
-                            "data": data,
-                        },
+                        public_event(event),
                         sort_keys=True,
                         separators=(",", ":"),
                     )
                     yield f"id: {cursor}\ndata: {payload}\n\n"
                 job = store.get_job(job_id)
                 terminal = job is None or job["status"] in TERMINAL_STATUSES
-                if not follow or terminal or await request.is_disconnected():
+                if not follow or await request.is_disconnected():
                     break
+                if terminal:
+                    if len(events) < 500:
+                        break
+                    continue
                 if events:
                     idle_cycles = 0
                 else:

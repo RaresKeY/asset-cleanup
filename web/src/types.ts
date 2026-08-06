@@ -12,8 +12,11 @@ export interface AssetSource {
   name: string;
   kind?: string;
   hash?: string;
-  preview_url?: string;
-  inspection?: Inspection;
+  bytes?: number;
+  media_type?: string;
+  created_utc?: string;
+  preview_url?: string | null;
+  inspection?: Inspection | null;
 }
 
 export interface Inspection {
@@ -37,6 +40,9 @@ export interface RunEvent {
   level: "debug" | "info" | "warning" | "error";
   type: string;
   stage?: string | null;
+  status?: string | null;
+  stage_status?: string | null;
+  progress?: number | null;
   message: string;
   data?: Record<string, unknown>;
 }
@@ -45,29 +51,41 @@ export interface Artifact {
   name: string;
   kind?: string;
   url?: string;
-  size?: number;
+  size?: number | null;
 }
 
 export interface Job {
   id: string;
-  workspace_id?: string;
-  source_id?: string;
+  workspace_id?: string | null;
+  source_id?: string | null;
+  status?: "queued" | "running" | "succeeded" | "failed" | "cancelled";
   state: JobState;
-  stage?: string;
-  progress?: number;
-  message?: string;
+  stage?: string | null;
+  event_sequence?: number;
+  progress?: number | null;
+  message?: string | null;
+  error_type?: string | null;
+  error_message?: string | null;
+  retry_of?: string | null;
   cancel_requested?: boolean;
   created_utc?: string;
   updated_utc?: string;
-  recipe?: Recipe;
+  recipe?: Record<string, unknown>;
+  editor_recipe?: Recipe;
   events?: RunEvent[];
-  source_preview_url?: string;
-  candidate_preview_url?: string;
-  collision_preview_url?: string;
+  source_preview_url?: string | null;
+  candidate_preview_url?: string | null;
+  collision_preview_url?: string | null;
   artifacts?: Artifact[];
-  inspection?: Inspection;
-  metrics?: Record<string, unknown>;
-  validation?: Record<string, unknown>;
+  inspection?: Inspection | null;
+  metrics?: Record<string, unknown> | null;
+  validation?: Record<string, unknown> | null;
+}
+
+export interface Page<T> {
+  items: T[];
+  limit: number;
+  offset: number;
 }
 
 export interface Recipe {

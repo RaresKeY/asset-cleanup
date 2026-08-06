@@ -18,6 +18,78 @@ from asset_cleanup.util import confined_path, sha256_file
 from asset_cleanup.web.config import WebConfig
 from asset_cleanup.web.store import Store
 
+STAGE_PROGRESS = {
+    "queue": 0.0,
+    "intake": 0.10,
+    "inspect": 0.25,
+    "geometry": 0.50,
+    "collision": 0.70,
+    "validation": 0.85,
+    "package": 0.95,
+    "worker": 0.02,
+}
+
+
+def public_event(event: dict[str, Any]) -> dict[str, Any]:
+    """Return one stable console/progress event, including legacy stored rows."""
+
+    kind = str(event["kind"])
+    data = dict(event.get("data") or {})
+    stage = data.get("stage")
+    if stage is None:
+        stage = {
+            "job.queued": "queue",
+            "job.started": "intake",
+            "job.cancel_requested": "worker",
+            "job.succeeded": "package",
+            "job.failed": "worker",
+            "job.cancelled": "worker",
+        }.get(kind)
+    status = data.get("status")
+    if status is None:
+        status = {
+            "job.queued": "queued",
+            "job.started": "running",
+            "job.cancel_requested": "running",
+            "job.succeeded": "succeeded",
+            "job.failed": "failed",
+            "job.cancelled": "cancelled",
+        }.get(kind, "running" if kind.startswith("stage.") else None)
+    stage_status = data.get("stage_status")
+    if stage_status is None:
+        stage_status = kind.split(".", 1)[1] if kind.startswith("stage.") else status
+    progress = data.get("progress")
+    if progress is None:
+        progress = (
+            1.0
+            if status in {"succeeded", "failed", "cancelled"}
+            else STAGE_PROGRESS.get(str(stage), 0.02 if status == "running" else 0.0)
+        )
+    level = data.get(
+        "level",
+        "error" if kind.endswith("failed") else "warning" if "cancel" in kind else "info",
+    )
+    data.update(
+        {
+            "stage": stage,
+            "status": status,
+            "stage_status": stage_status,
+            "progress": progress,
+        }
+    )
+    return {
+        "sequence": int(event["sequence"]),
+        "created_utc": event["created_utc"],
+        "level": level,
+        "type": kind,
+        "stage": stage,
+        "status": status,
+        "stage_status": stage_status,
+        "progress": progress,
+        "message": event["message"],
+        "data": data,
+    }
+
 
 class JobWorker:
     """Claim and execute at most one queued job per call."""
@@ -236,9 +308,14 @@ class JobWorker:
                 kind = str(event.get("type", "pipeline.event"))
                 if kind not in {"job.completed", "job.failed"}:
                     data = dict(event.get("data") or {})
+                    stage = event.get("stage")
+                    stage_status = kind.split(".", 1)[1] if kind.startswith("stage.") else None
                     data.update(
                         {
-                            "stage": event.get("stage"),
+                            "stage": stage,
+                            "status": "running",
+                            "stage_status": stage_status,
+                            "progress": STAGE_PROGRESS.get(str(stage), 0.02),
                             "level": event.get("level", "info"),
                             "pipeline_sequence": event.get("sequence"),
                             "pipeline_created_utc": event.get("created_utc"),
@@ -320,10 +397,22 @@ def public_job(
 ) -> dict[str, Any]:
     """Remove internal filesystem and recipe storage details from API records."""
 
-    result = {key: value for key, value in job.items() if key not in {"output_path", "recipe_json"}}
+    result = {
+        key: value
+        for key, value in job.items()
+        if key not in {"output_path", "recipe_json", "editor_recipe_json"}
+    }
+    if result.get("workspace_id") is None:
+        result.pop("workspace_id", None)
     recipe_json = job.get("recipe_json")
     if isinstance(recipe_json, str):
         result["recipe"] = json.loads(recipe_json)
+    editor_recipe_json = job.get("editor_recipe_json")
+    if isinstance(editor_recipe_json, str):
+        try:
+            result["editor_recipe"] = json.loads(editor_recipe_json)
+        except json.JSONDecodeError:
+            pass
     if artifacts is not None:
         result["artifacts"] = artifacts
     return result
