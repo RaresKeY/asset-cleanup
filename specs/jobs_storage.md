@@ -14,18 +14,18 @@ recipe only when expanding the derived editor fields reproduces the canonical
 recipe exactly. Unsupported full recipes remain visible but are not presented
 as safely editable browser recipes; retry persists a successfully derived form.
 
+Before either API creation path writes a job, its fully expanded recipe must fit
+the service's immutable `RecipeCeilings`, including upper resource bounds and
+lower shape-evidence/complexity bounds. Retry revalidates the original
+canonical recipe against the service's current policy before creating a linked
+row; it does not clamp or rewrite the recipe. This permits an operator to change
+policy without allowing older work to regain a now-disallowed budget through
+retry.
+
 The oldest un-cancelled queued job is atomically claimed. Worker startup changes
 interrupted `running` jobs to `failed` with `WorkerInterrupted`; retry creates a
 fresh linked job. Queued cancellation is immediate; running cancellation is a
 flag observed by the worker.
-
-Before source access or subprocess creation, the worker parses the stored
-canonical recipe and applies its own immutable `RecipeCeilings`. A direct or
-legacy queued job outside policy fails with `RecipePolicyError`; its persisted
-job error contains a deterministic bounded compact JSON summary with path-sorted
-violations. Activity-event messages retain their smaller bounded/truncated
-representation. The immutable stored recipe and hash are not changed. API
-creation and retry apply the same check before enqueueing.
 
 Each job, and CLI parser work, runs in a child process group with disconnected stdin/stdout and a
 private stderr log. The parent mirrors bounded JSONL events into SQLite, applies
@@ -34,7 +34,12 @@ sends KILL/kill if needed. POSIX children set CPU, address-space, and open-file
 limits before mesh parsing. Failure registers only surviving confined artifacts.
 Any monitoring/event-storage exception terminates the still-running child before
 the job is failed. The worker rechecks the source's stored size and SHA-256 before
-launch. Download and ZIP creation recheck registered file path, size, and SHA-256.
+launch. It also parses and revalidates the claimed job's immutable recipe against
+the worker's `RecipeCeilings` before creating any output directory, temporary
+recipe, or child process. This execution-side boundary protects against stale,
+imported, or directly modified queue data; a violation fails the job without
+launching untrusted processing. Download and ZIP creation recheck registered file
+path, size, and SHA-256.
 Lifecycle and mirrored pipeline events retain normalized stage, status,
 stage-status, and progress fields so the SSE stream, JSON history, thread rail,
 and copied console agree. Web jobs persist the exact compact editor input beside
@@ -48,7 +53,7 @@ full backlog page before closing.
 
 - There is one logical worker: multi-host leases, priorities, cleanup/retention,
   and object storage are not implemented.
-- Split API/worker deployments do not negotiate policy versions; a stricter
-  worker safely fails a job accepted by a looser API.
 - Non-POSIX parser isolation/limits, disk/output quotas, seccomp, and cgroup
   enforcement remain deployment work.
+- A separately configured worker must use policy equal to or stricter than the
+  API. There is no signed policy handshake between distributed processes yet.

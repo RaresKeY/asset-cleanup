@@ -37,7 +37,7 @@ class RecipePolicyError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class RecipeCeilings:
-    """Immutable service-owned bounds that submitted recipes may only tighten."""
+    """Immutable service-owned resource and evidence/complexity bounds."""
 
     max_input_bytes: int = 1_073_741_824
     max_scene_nodes: int = 100_000
@@ -83,7 +83,7 @@ class RecipeCeilings:
 
     @property
     def minimums(self) -> dict[str, int | float]:
-        """Return inverse-cost settings whose service policy is a lower bound."""
+        """Return evidence/complexity settings enforced as policy lower bounds."""
 
         return {
             "settings.shape_detection.cylinder_min_axial_bins": (self.min_cylinder_axial_bins),

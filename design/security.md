@@ -26,6 +26,12 @@ escape the service.
 
 - Recipes contain only versioned typed data and a small declarative condition
   vocabulary—no Python, templates, shell, or arbitrary executable paths.
+- The long-lived service owns immutable recipe ceilings. Bound both ordinary
+  resource maximums and minimum evidence/complexity thresholds. Post-fit sample
+  and cylinder-bin floors reject weak primitive evidence; the planar-area floor
+  chiefly bounds report cardinality. Reject rather than silently clamp so the
+  canonical recipe and hash remain truthful. Validate on schema/policy
+  validation, create, retry, and immediately before worker execution.
 - External adapters receive fixed executable identities and argument arrays.
 - Jobs run in separate process groups; the current POSIX child enforces CPU,
   address-space, open-file, and time limits, while Compose/container limits add
@@ -40,14 +46,15 @@ escape the service.
 ## Web and container boundaries
 
 - Same-origin access and loopback binding are defaults; CORS is disabled.
-- Trusted-host and same-origin checks precede a whole-request spool boundary.
-  Strict declared-length and observed-byte limits protect JSON as well as
-  multipart uploads, while terminal request replay preserves disconnect events
-  needed by streaming responses.
-- Server-owned immutable recipe ceilings are an authority boundary. A recipe
-  may ask for less work but cannot raise maximums or lower inverse-cost floors;
-  API and worker reject rather than mutate it, and advertise the effective
-  policy for clients.
+- Bound every request body before framework parsers. Validate strict
+  `Content-Length` syntax and duplicates as an early rejection only; streamed
+  byte counting remains authoritative when the header is absent or dishonest.
+  Spool accepted bodies to a private bounded temporary file and replay them in
+  bounded chunks so multipart and JSON parsing share one memory-safe boundary.
+- Grant the larger multipart allowance only to exact upload methods and routes;
+  a content-type claim alone must never enlarge another endpoint's body budget.
+- Reject invalid origins and hosts outside the spooling boundary so an attacker
+  cannot force the service to consume its full body allowance before rejection.
 - Inline rendering is limited to sanitized derived preview GLB and approved
   images. Raw uploads download as attachments.
 - Artifact access resolves registered immutable IDs beneath the data root.
@@ -63,6 +70,6 @@ escape the service.
 - Platform-specific sandboxing beyond POSIX resource limits needs a separate
   Linux/macOS/Windows design.
 - Fuzz corpora and decompression-bomb fixtures are not yet assembled.
-- Slow-client deadlines, aggregate concurrent request-spool quotas, and service
-  policy version negotiation remain deployment design work.
 - Remote multi-user authorization, quotas, and audit policy are deferred.
+- Aggregate request-rate, response-bandwidth, temporary-disk, and workspace
+  storage budgets still need an authenticated deployment design.
