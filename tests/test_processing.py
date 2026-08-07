@@ -158,9 +158,7 @@ def test_external_validator_warnings_obey_fail_on_warning(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     data = _recipe().model_dump(mode="python")
-    data["settings"]["validation"].update(
-        {"gltf_validator": True, "fail_on_warning": True}
-    )
+    data["settings"]["validation"].update({"gltf_validator": True, "fail_on_warning": True})
     recipe = Recipe.model_validate(data)
     capabilities = processing.capability_map()
     capabilities["gltf-validator"] = {
@@ -194,9 +192,7 @@ def test_external_validator_warnings_obey_fail_on_warning(
     result = processing.run_pipeline(_source(tmp_path), recipe, output)
 
     assert result.status == "candidate"
-    validation = json.loads(
-        (output / "70_proof" / "validation.json").read_text(encoding="utf-8")
-    )
+    validation = json.loads((output / "70_proof" / "validation.json").read_text(encoding="utf-8"))
     assert validation["gates"]["external_gltf_validator"]["passed"] is True
     assert validation["warnings_gate"] == {
         "requested": True,
@@ -205,4 +201,3 @@ def test_external_validator_warnings_obey_fail_on_warning(
         "internal_warning_count": 0,
         "external_gltf_warning_count": 1,
     }
-

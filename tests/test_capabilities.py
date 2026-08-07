@@ -15,9 +15,7 @@ def test_gltf_validator_discovery_skips_unsupported_version_probe(
     monkeypatch.setattr(capabilities.shutil, "which", fake_which)
     monkeypatch.setattr(capabilities.subprocess, "run", fail_run)
 
-    discovered = {
-        item.name: item for item in capabilities.detect_capabilities()
-    }["gltf-validator"]
+    discovered = {item.name: item for item in capabilities.detect_capabilities()}["gltf-validator"]
 
     assert discovered.available is True
     assert discovered.executable == "/opt/gltf_validator"
