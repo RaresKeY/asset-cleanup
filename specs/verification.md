@@ -24,13 +24,13 @@ rg --files design specs vendored | sort
 rg --files-without-match '^## Gaps$' design specs vendored
 ```
 
-The Python suite currently collects 143 tests and the frontend suite collects
+The Python suite currently collects 144 tests and the frontend suite collects
 20; these counts are informative rather than a compatibility contract. It
 covers core processing plus SQLite claims/recovery/cancellation/orphan
 termination, strict request-body limits, recipe-policy creation/retry/worker
 enforcement, FastAPI upload/SSE/evidence integrity, CLI source-alias protection,
-workspace job lineage/event history, browser state, and bounds-based camera
-framing.
+workspace job lineage/event history, browser state, bounds-based camera framing,
+and the validator capability probe contract.
 CI runs locked Python and frontend checks, builds distributions, builds the OCI
 image, and starts a hardened read-only container for health/UI smoke checks. It
 asserts validator version 2.0.0-dev.3.10 from a timestamp/path-free synthetic
