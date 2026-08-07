@@ -493,11 +493,7 @@ def run_gltf_validator(
             parse_reason = "validator did not emit strict UTF-8 JSON"
 
     names = ("numErrors", "numWarnings", "numInfos", "numHints")
-    counts = (
-        {name: _issue_count(report, name) for name in names}
-        if report is not None
-        else None
-    )
+    counts = {name: _issue_count(report, name) for name in names} if report is not None else None
     issue_counts = (
         {
             "errors": counts["numErrors"],

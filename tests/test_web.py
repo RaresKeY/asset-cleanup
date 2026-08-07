@@ -1124,4 +1124,3 @@ def test_legacy_editor_json_without_validator_field_recovers_canonical_false() -
     assert recovered.validation.gltf_validator is False
     assert _recipe_from_web(recovered).canonical_json() == canonical_json
     assert canonical.canonical_hash() == Recipe.from_json(canonical_json).canonical_hash()
-
