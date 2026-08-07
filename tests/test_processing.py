@@ -177,7 +177,7 @@ def test_external_validator_warnings_obey_fail_on_warning(
         *,
         discovered_version: str | None = None,
     ) -> dict[str, object]:
-        assert path.name == "source.glb"
+        assert path.name == "visual_candidate.glb"
         assert executable == "/test/gltf_validator"
         assert discovered_version == "2.0.0-dev.3.10"
         return {
