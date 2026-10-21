@@ -60,3 +60,9 @@ select = ["B", "E", "F", "I", "UP"]
 python_version = "3.12"
 strict = true
 packages = ["asset_cleanup"]
+
+[tool.uv]
+
+constraint-dependencies = ["pip>=26.2.2", "certifi>=2026.10.19", "uv>=0.13.4", "sigstore>=4.5.1"]
+
+build-constraint-dependencies = ["pip>=26.2.2", "certifi>=2026.10.19", "uv>=0.13.4", "sigstore>=4.5.1"]

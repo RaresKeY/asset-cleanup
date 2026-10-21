@@ -1,5 +1,16 @@
 # syntax=docker/dockerfile:1.7
 
+# Python installer trust is repaired before networked dependency work.
+FROM python:3.12-slim-bookworm AS python-base
+COPY security/ca-trust /opt/ca-trust
+RUN apt-get update -o APT::Update::Error-Mode=any \
+    && apt-get install -y --no-install-recommends ca-certificates openssl \
+    && update-ca-certificates \
+    && python -I /opt/ca-trust/verify_trust.py --system \
+    && python -I -m pip download --isolated --cert /etc/ssl/certs/ca-certificates.crt --no-cache-dir --no-deps --only-binary=:all: --require-hashes -r /opt/ca-trust/requirements-bootstrap.txt --dest /opt/ca-trust/wheels \
+    && python -I /opt/ca-trust/bootstrap_image.py \
+    && rm -rf /var/lib/apt/lists/* /opt/ca-trust/wheels
+
 # Build the browser application separately. Node is deliberately absent from the
 # production image.
 FROM node:22-bookworm-slim AS frontend-build
@@ -13,7 +24,7 @@ RUN npm run build
 # Fetch the official native validator as exact bytes in a disposable stage.
 # Khronos currently publishes this pin only for Linux amd64; unsupported image
 # architectures fail explicitly instead of silently omitting a requested gate.
-FROM python:3.12-slim-bookworm AS gltf-validator-build
+FROM python-base AS gltf-validator-build
 
 RUN test "$(dpkg --print-architecture)" = "amd64"
 ADD --checksum=sha256:168eba887964125abe17ae97899b38d0b3cfd73c266c78424c194929ddcbc522 \
@@ -41,9 +52,9 @@ RUN chmod 0755 /opt/gltf-validator/gltf_validator && \
 
 # Resolve Python dependencies from the committed uv lock and build a wheel. The
 # wheel avoids an editable installation that would point back to the build stage.
-FROM python:3.12-slim-bookworm AS python-build
+FROM python-base AS python-build
 
-COPY --from=ghcr.io/astral-sh/uv:0.11.33 /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.13.4 /uv /uvx /bin/
 WORKDIR /build
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
@@ -58,7 +69,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv build --wheel --out-dir /tmp/wheels && \
     uv pip install --python /opt/venv/bin/python --no-deps /tmp/wheels/*.whl
 
-FROM python:3.12-slim-bookworm AS runtime
+FROM python-base AS runtime
 
 ARG APP_UID=10001
 ARG APP_GID=10001
@@ -77,6 +88,7 @@ WORKDIR /app
 # `asset-cleanup` fail at container startup with an unavailable interpreter.
 COPY --from=python-build --chown=${APP_UID}:${APP_GID} /opt/venv /opt/venv
 COPY --from=frontend-build --chown=${APP_UID}:${APP_GID} /build/web/dist /app/web
+RUN python -I /opt/ca-trust/verify_trust.py --system --python
 COPY --from=gltf-validator-build /opt/gltf-validator/gltf_validator /usr/local/bin/gltf_validator
 COPY --from=gltf-validator-build /opt/gltf-validator/LICENSE /usr/share/licenses/gltf-validator/LICENSE
 COPY --from=gltf-validator-build /opt/gltf-validator/NOTICES /usr/share/doc/gltf-validator/NOTICES

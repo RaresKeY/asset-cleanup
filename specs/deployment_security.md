@@ -33,6 +33,12 @@ no-new-privileges, PID/memory/CPU limits, and init. The secure overlay runs a
 separate worker with `--no-embedded-worker`, the shared data volume, and
 `network_mode: none`.
 
+## Certificate trust
+
+The project lock selects certifi 2026.10.19. Project resolver and build constraints prevent reintroducing affected pip, certifi, uv and sigstore versions. The shared Python base refreshes signed distro trust and verifies it before HTTPS, integrity-pins pip/certifi bootstrap wheels and repairs future venv seeds. Python build/runtime stages inherit that base and the final selected venv store is checked. The installer stage selects uv 0.13.4.
+
+The existing local environment was repaired with reviewed offline pip/certifi wheels and passed effective-store, twelve-chain file/directory controls and ordinary/negative live TLS. This does not attest an existing deployment image. The legacy Node frontend build is outside the permitted execution workflow; no Node/npm command was run. Full container rebuild remains unverified pending a permitted frontend build path and corrected host container-registry client.
+
 ## Gaps
 
 - Release provenance, SBOM/signing/scanning, rootless host guidance, TLS/reverse
